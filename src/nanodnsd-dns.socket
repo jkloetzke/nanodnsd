@@ -1,0 +1,11 @@
+[Unit]
+Description=NanoDNS daemon DNS sockets
+
+[Socket]
+ListenDatagram=53
+ListenStream=53
+FileDescriptorName=dns
+Service=nanodnsd.service
+
+[Install]
+WantedBy=sockets.target

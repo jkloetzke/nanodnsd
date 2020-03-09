@@ -1,0 +1,8 @@
+[Unit]
+Description=NanoDNS daemon
+RefuseManualStart=true
+
+[Service]
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/nanodnsd
+Sockets=nanodnsd-dns.socket nanodnsd-http.socket
+DynamicUser=true
