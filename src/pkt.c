@@ -29,7 +29,7 @@ int pkt_get_uint16(struct pkt *pkt, uint16_t *out)
 {
 	uint16_t tmp;
 
-	if ((pkt->idx + sizeof(uint16_t)) >= pkt->len)
+	if ((pkt->idx + sizeof(uint16_t)) > pkt->len)
 		return -EFAULT;
 
 	memcpy(&tmp, pkt->buf + pkt->idx, sizeof(uint16_t));
@@ -57,7 +57,7 @@ int pkt_get_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
 		if (hdr <= MAX_LABEL_SIZE) {
 			if ((len+hdr+1u) >= MAX_NAME_SIZE)
 				return -EINVAL;
-			if (idx+hdr >= pkt->len)
+			if (idx+hdr > pkt->len)
 				return -EFAULT;
 			if ((ret = utils_validate_label((char *)(pkt->buf + idx), hdr)) < 0)
 				return ret;
@@ -91,7 +91,7 @@ int pkt_put_uint16(struct pkt *pkt, uint16_t val)
 {
 	uint16_t tmp = htons(val);
 
-	if ((pkt->idx + sizeof(uint16_t)) >= pkt->len)
+	if ((pkt->idx + sizeof(uint16_t)) > pkt->len)
 		return -EFAULT;
 
 	memcpy(pkt->buf + pkt->idx, &tmp, sizeof(uint16_t));
@@ -104,7 +104,7 @@ int pkt_put_uint32(struct pkt *pkt, uint32_t val)
 {
 	uint32_t tmp = htonl(val);
 
-	if ((pkt->idx + sizeof(uint32_t)) >= pkt->len)
+	if ((pkt->idx + sizeof(uint32_t)) > pkt->len)
 		return -EFAULT;
 
 	memcpy(pkt->buf + pkt->idx, &tmp, sizeof(uint32_t));
@@ -160,7 +160,7 @@ int pkt_or_uint16(struct pkt *pkt, size_t off, uint16_t val)
 {
 	uint16_t tmp;
 
-	if ((off + sizeof(uint16_t)) >= pkt->idx)
+	if ((off + sizeof(uint16_t)) > pkt->len)
 		return -EFAULT;
 
 	memcpy(&tmp, pkt->buf + off, sizeof(uint16_t));
