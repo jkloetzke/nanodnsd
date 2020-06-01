@@ -467,6 +467,18 @@ static int http_create_socket(void)
 		return log_errno_fatal("listen");
 	}
 
+	// print ephemeral port if we used one
+	if (db_get_http_port() == 0) {
+		struct sockaddr_in6 sa;
+		socklen_t sa_len = sizeof(sa);
+		ret = getsockname(fd, (struct sockaddr *)&sa, &sa_len);
+		if (ret < 0) {
+			close(fd);
+			return log_errno_fatal("getsockname");
+		}
+		fprintf(stderr, "http %d\n", ntohs(sa.sin6_port));
+	}
+
 	return fd;
 }
 

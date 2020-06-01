@@ -538,6 +538,18 @@ static int dns_create_tcp_socket(void)
 		return log_errno_fatal("listen");
 	}
 
+	// print ephemeral port if we used one
+	if (db_get_tcp_port() == 0) {
+		struct sockaddr_in6 sa;
+		socklen_t sa_len = sizeof(sa);
+		ret = getsockname(fd, (struct sockaddr *)&sa, &sa_len);
+		if (ret < 0) {
+			close(fd);
+			return log_errno_fatal("getsockname");
+		}
+		fprintf(stderr, "tcp %d\n", ntohs(sa.sin6_port));
+	}
+
 	return fd;
 }
 
@@ -632,6 +644,18 @@ static int dns_create_udp_socket(void)
 	if (ret < 0) {
 		close(fd);
 		return log_errno_fatal("bind");
+	}
+
+	// print ephemeral port if we used one
+	if (db_get_udp_port() == 0) {
+		struct sockaddr_in6 sa;
+		socklen_t sa_len = sizeof(sa);
+		ret = getsockname(fd, (struct sockaddr *)&sa, &sa_len);
+		if (ret < 0) {
+			close(fd);
+			return log_errno_fatal("getsockname");
+		}
+		fprintf(stderr, "udp %d\n", ntohs(sa.sin6_port));
 	}
 
 	return fd;
