@@ -26,6 +26,7 @@
 #include "defs.h"
 
 struct poll_set;
+struct dns_server;
 
 enum opcode
 {
@@ -110,6 +111,7 @@ void dns_rr_add(struct dns_rr **anchor, struct dns_rr *n);
 struct dns_reply *dns_reply_new(enum rcode rcode);
 void dns_reply_delete(struct dns_reply **r);
 
-int dns_create_server(struct poll_set *ps);
+struct dns_server* dns_server_new(struct poll_set *ps);
+void dns_server_delete(struct dns_server **srv);
 
 #endif

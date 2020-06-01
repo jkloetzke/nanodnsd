@@ -49,6 +49,8 @@ static void help(FILE *stream, bool full)
 
 int main(int argc, char **argv)
 {
+	struct http_server *http_server = NULL;
+	struct dns_server *dns_server = NULL;
 	const char *cfg = CMAKE_INSTALL_FULL_SYSCONFDIR "/nanodnsd.conf";
 	int ret;
 
@@ -89,13 +91,17 @@ int main(int argc, char **argv)
 	if (!ps)
 		return EXIT_FAILURE;
 
-	ret = dns_create_server(ps);
-	if (ret < 0)
+	dns_server = dns_server_new(ps);
+	if (!dns_server) {
+		ret = -ENOMEM;
 		goto out;
+	}
 
-	ret = http_create_server(ps);
-	if (ret < 0)
+	http_server = http_server_new(ps);
+	if (!http_server) {
+		ret = -ENOMEM;
 		goto out;
+	}
 
 	/*
 	 * Run
@@ -126,6 +132,8 @@ int main(int argc, char **argv)
 	ret = poll_set_dispatch(ps);
 
 out:
+	http_server_delete(&http_server);
+	dns_server_delete(&dns_server);
 	poll_set_delete(&ps);
 	return ret >= 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -28,6 +28,7 @@
 #include "daemon.h"
 #include "db.h"
 #include "dns.h"
+#include "list.h"
 #include "log.h"
 #include "pkt.h"
 #include "poll.h"
@@ -42,8 +43,18 @@ struct dns_tcp_client
 	int fd;
 	struct poll_source *io;
 	struct poll_source *idle_timer;
+	struct list_node server_node;
+	struct dns_server *server;
 };
 
+struct dns_server
+{
+	struct poll_set *ps;
+	struct poll_source *listen_ps_udp;
+	struct poll_source *listen_ps_tcp;
+	LIST_HEAD(struct dns_tcp_client, server_node) clients;
+	unsigned max_clients, num_clients;
+};
 
 struct dns_rr *dns_rr_new(char name[MAX_NAME_SIZE+1], enum type type, uint32_t ttl)
 {
@@ -315,12 +326,34 @@ query_fail:
 }
 
 
-static void dns_free_tcp_client(struct dns_tcp_client *client)
+static struct dns_tcp_client* dns_tcp_client_new(struct dns_server *srv)
 {
-	shutdown(client->fd, SHUT_RDWR);
-	poll_source_free(&client->idle_timer);
-	poll_source_free(&client->io);
-	free(client);
+	struct dns_tcp_client *client = calloc(1, sizeof(struct dns_tcp_client));
+	if (!client)
+		return NULL;
+	list_node_init(&client->server_node);
+	client->server = srv;
+	client->fd = -1;
+
+	srv->num_clients++;
+	list_add_tail(&srv->clients, client);
+
+	return client;
+}
+
+static void dns_tcp_client_delete(struct dns_tcp_client **client)
+{
+	if (!*client)
+		return;
+
+	if ((*client)->fd >= 0)
+		shutdown((*client)->fd, SHUT_RDWR);
+	poll_source_free(&(*client)->idle_timer);
+	poll_source_free(&(*client)->io);
+	list_node_del(&(*client)->server_node);
+	(*client)->server->num_clients--;
+	free(*client);
+	*client = NULL;
 }
 
 static int dns_try_handle_tcp(struct dns_tcp_client *client)
@@ -382,7 +415,7 @@ static int dns_handle_tcp_client(void *ctx, int fd, poll_event_t events)
 	ssize_t len;
 
 	if (events & (POLL_EVENT_ERR | POLL_EVENT_HUP)) {
-		dns_free_tcp_client(client);
+		dns_tcp_client_delete(&client);
 		return 0;
 	}
 
@@ -402,7 +435,7 @@ static int dns_handle_tcp_client(void *ctx, int fd, poll_event_t events)
 				break;
 			} else {
 				log_errno_warn("client write failed");
-				dns_free_tcp_client(client);
+				dns_tcp_client_delete(&client);
 				return 0;
 			}
 		}
@@ -421,13 +454,13 @@ static int dns_handle_tcp_client(void *ctx, int fd, poll_event_t events)
 			if (len > 0) {
 				client->qlen += (unsigned)len;
 			} else if (len == 0) {
-				dns_free_tcp_client(client);
+				dns_tcp_client_delete(&client);
 				return 0;
 			} else if (errno == EAGAIN && errno == EWOULDBLOCK) {
 				break;
 			} else {
 				log_errno_warn("client read failed");
-				dns_free_tcp_client(client);
+				dns_tcp_client_delete(&client);
 				return 0;
 			}
 		}
@@ -438,7 +471,7 @@ static int dns_handle_tcp_client(void *ctx, int fd, poll_event_t events)
 
 	int ret = dns_try_handle_tcp(client);
 	if (ret < 0) {
-		dns_free_tcp_client(client);
+		dns_tcp_client_delete(&client);
 		return 0;
 	}
 
@@ -453,14 +486,14 @@ static int dns_handle_tcp_timeout(void *ctx)
 	struct dns_tcp_client *client = ctx;
 
 	log_dbg("client idle timeout");
-	dns_free_tcp_client(client);
+	dns_tcp_client_delete(&client);
 
 	return 0;
 }
 
 static int dns_handle_tcp_listen(void *ctx, int listen_fd, poll_event_t events)
 {
-	struct poll_set *ps = ctx;
+	struct dns_server *srv = ctx;
 	int fd, ret;
 
 	if (events & (POLL_EVENT_ERR | POLL_EVENT_HUP))
@@ -473,29 +506,33 @@ static int dns_handle_tcp_listen(void *ctx, int listen_fd, poll_event_t events)
 			continue;
 		}
 
-		struct dns_tcp_client *client = calloc(1, sizeof(struct dns_tcp_client));
+		struct dns_tcp_client *client = dns_tcp_client_new(srv);
 		if (!client) {
 			log_err("OOM when accepting tcp client!");
 			close(fd);
 			continue;
 		}
 
+		while (srv->num_clients > srv->max_clients) {
+			struct dns_tcp_client *victim = list_pop_front(&srv->clients);
+			dns_tcp_client_delete(&victim);
+		}
+
 		client->fd = fd;
-		ret = poll_set_add_io(ps, &client->io, fd, POLL_EVENT_IN,
+		ret = poll_set_add_io(srv->ps, &client->io, fd, POLL_EVENT_IN,
 			dns_handle_tcp_client, client);
 		if (ret < 0) {
 			log_err("poll_set_add_io failed for client: %d", ret);
 			close(fd);
-			free(client);
+			dns_tcp_client_delete(&client);
 			continue;
 		}
 
-		ret = poll_set_add_timer(ps, &client->idle_timer, db_get_tcp_timeout(),
+		ret = poll_set_add_timer(srv->ps, &client->idle_timer, db_get_tcp_timeout(),
 			dns_handle_tcp_timeout, client);
 		if (ret < 0) {
 			log_err("poll_set_add_timer failed: %d", ret);
-			poll_source_free(&client->io);
-			free(client);
+			dns_tcp_client_delete(&client);
 		}
 	}
 
@@ -661,9 +698,17 @@ static int dns_create_udp_socket(void)
 	return fd;
 }
 
-int dns_create_server(struct poll_set *ps)
+struct dns_server* dns_server_new(struct poll_set *ps)
 {
 	int fd, ret;
+	struct dns_server *srv;
+
+	srv = calloc(1, sizeof(struct dns_server));
+	if (!srv)
+		return NULL;
+	list_init(&srv->clients);
+	srv->ps = ps;
+	srv->max_clients = db_get_http_connections();
 
 	/*
 	 * TCP
@@ -673,21 +718,22 @@ int dns_create_server(struct poll_set *ps)
 	if (fd < 0)
 		fd = dns_create_tcp_socket();
 	if (fd < 0)
-		return fd;
+		goto fail;
 
 	// make non-blocking
 	ret = set_non_block(fd);
 	if (ret < 0) {
 		close(fd);
-		return ret;
+		goto fail;
 	}
 
 	// Add to event loop. Takes ownership of file descriptor.
-	ret = poll_set_add_io(ps, NULL, fd, POLL_EVENT_IN, dns_handle_tcp_listen, ps);
+	ret = poll_set_add_io(ps, &srv->listen_ps_tcp, fd, POLL_EVENT_IN,
+		dns_handle_tcp_listen, srv);
 	if (ret < 0) {
 		close(fd);
 		log_fatal("poll_set_add_io(tcp) failed: %d", ret);
-		return ret;
+		goto fail;
 	}
 
 	/*
@@ -698,22 +744,42 @@ int dns_create_server(struct poll_set *ps)
 	if (fd < 0)
 		fd = dns_create_udp_socket();
 	if (fd < 0)
-		return fd;
+		goto fail;
 
 	// make non-blocking
 	ret = set_non_block(fd);
 	if (ret < 0) {
 		close(fd);
-		return ret;
+		goto fail;
 	}
 
 	// Add to event loop. Takes ownership of file descriptor.
-	ret = poll_set_add_io(ps, NULL, fd, POLL_EVENT_IN, dns_handle_udp, NULL);
+	ret = poll_set_add_io(ps, &srv->listen_ps_udp, fd, POLL_EVENT_IN,
+		dns_handle_udp, NULL);
 	if (ret < 0) {
 		close(fd);
 		log_fatal("poll_set_add_io(udp) failed: %d", ret);
-		return ret;
+		goto fail;
 	}
 
-	return 0;
+	return srv;
+
+fail:
+	poll_source_free(&srv->listen_ps_udp);
+	poll_source_free(&srv->listen_ps_tcp);
+	free(srv);
+	return NULL;
+}
+
+void dns_server_delete(struct dns_server **srv)
+{
+	if (!*srv)
+		return;
+
+	list_for_each_safe((*srv)->clients, i)
+		dns_tcp_client_delete(&i);
+	poll_source_free(&(*srv)->listen_ps_udp);
+	poll_source_free(&(*srv)->listen_ps_tcp);
+	free(*srv);
+	*srv = NULL;
 }

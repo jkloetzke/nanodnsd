@@ -27,6 +27,7 @@
 #include "daemon.h"
 #include "defs.h"
 #include "db.h"
+#include "list.h"
 #include "log.h"
 #include "poll.h"
 #include "utils.h"
@@ -84,6 +85,16 @@ struct http_client
 	int fd;
 	struct poll_source *io;
 	struct poll_source *idle_timer;
+	struct list_node server_node;
+	struct http_server *server;
+};
+
+struct http_server
+{
+	struct poll_set *ps;
+	struct poll_source *listen_ps;
+	LIST_HEAD(struct http_client, server_node) clients;
+	unsigned max_clients, num_clients;
 };
 
 static const char *code2message(enum http_result code)
@@ -100,17 +111,39 @@ static char *strdupdecode(const char *s)
 	return strdup(s);
 }
 
-static void http_free_client(struct http_client *client)
+static struct http_client *http_client_new(struct http_server *srv)
 {
-	free(client->update.hostname);
-	free(client->update.token);
-	free(client->update.ipv4);
-	free(client->update.ipv6);
+	struct http_client *client = calloc(1, sizeof(struct http_client));
+	if (!client)
+		return NULL;
+	list_node_init(&client->server_node);
+	client->server = srv;
+	client->fd = -1;
 
-	shutdown(client->fd, SHUT_RDWR);
-	poll_source_free(&client->idle_timer);
-	poll_source_free(&client->io);
-	free(client);
+	srv->num_clients++;
+	list_add_tail(&srv->clients, client);
+
+	return client;
+}
+
+static void http_client_delete(struct http_client **client)
+{
+	if (!*client)
+		return;
+
+	free((*client)->update.hostname);
+	free((*client)->update.token);
+	free((*client)->update.ipv4);
+	free((*client)->update.ipv6);
+
+	if ((*client)->fd >= 0)
+		shutdown((*client)->fd, SHUT_RDWR);
+	poll_source_free(&(*client)->idle_timer);
+	poll_source_free(&(*client)->io);
+	list_node_del(&(*client)->server_node);
+	(*client)->server->num_clients--;
+	free(*client);
+	*client = NULL;
 }
 
 static enum http_result http_parse_request(struct http_client *client, char *line)
@@ -335,7 +368,7 @@ static int http_handle_client(void *ctx, int fd, poll_event_t events)
 	ssize_t len;
 
 	if (events & (POLL_EVENT_ERR | POLL_EVENT_HUP)) {
-		http_free_client(client);
+		http_client_delete(&client);
 		return 0;
 	}
 
@@ -350,13 +383,13 @@ static int http_handle_client(void *ctx, int fd, poll_event_t events)
 				client->len += (unsigned)len;
 				client->buf[client->len] = '\0';
 			} else if (len == 0) {
-				http_free_client(client);
+				http_client_delete(&client);
 				return 0;
 			} else if (errno == EAGAIN && errno == EWOULDBLOCK) {
 				break;
 			} else {
 				log_errno_warn("client read failed");
-				http_free_client(client);
+				http_client_delete(&client);
 				return 0;
 			}
 		}
@@ -367,7 +400,7 @@ static int http_handle_client(void *ctx, int fd, poll_event_t events)
 
 	int ret = http_handle_data(client);
 	if (ret < 0 || client->state == STATE_DONE) {
-		http_free_client(client);
+		http_client_delete(&client);
 		return 0;
 	}
 
@@ -382,14 +415,14 @@ static int http_handle_timeout(void *ctx)
 	struct http_client *client = ctx;
 
 	log_dbg("client idle timeout");
-	http_free_client(client);
+	http_client_delete(&client);
 
 	return 0;
 }
 
 static int http_handle_listen(void *ctx, int listen_fd, poll_event_t events)
 {
-	struct poll_set *ps = ctx;
+	struct http_server *srv = ctx;
 	int fd, ret;
 
 	if (events & (POLL_EVENT_ERR | POLL_EVENT_HUP))
@@ -402,29 +435,33 @@ static int http_handle_listen(void *ctx, int listen_fd, poll_event_t events)
 			continue;
 		}
 
-		struct http_client *client = calloc(1, sizeof(struct http_client));
+		struct http_client *client = http_client_new(srv);
 		if (!client) {
 			log_err("OOM when accepting http client!");
 			close(fd);
 			continue;
 		}
 
+		while (srv->num_clients > srv->max_clients) {
+			struct http_client *victim = list_pop_front(&srv->clients);
+			http_client_delete(&victim);
+		}
+
 		client->fd = fd;
-		ret = poll_set_add_io(ps, &client->io, fd, POLL_EVENT_IN,
+		ret = poll_set_add_io(srv->ps, &client->io, fd, POLL_EVENT_IN,
 			http_handle_client, client);
 		if (ret < 0) {
 			log_err("poll_set_add_io failed for client: %d", ret);
 			close(fd);
-			free(client);
+			http_client_delete(&client);
 			continue;
 		}
 
-		ret = poll_set_add_timer(ps, &client->idle_timer, db_get_http_timeout(),
-			http_handle_timeout, client);
+		ret = poll_set_add_timer(srv->ps, &client->idle_timer,
+			db_get_http_timeout(), http_handle_timeout, client);
 		if (ret < 0) {
 			log_err("poll_set_add_timer failed: %d", ret);
-			poll_source_free(&client->io);
-			free(client);
+			http_client_delete(&client);
 		}
 	}
 
@@ -482,30 +519,55 @@ static int http_create_socket(void)
 	return fd;
 }
 
-int http_create_server(struct poll_set *ps)
+struct http_server* http_server_new(struct poll_set *ps)
 {
 	int fd, ret;
+
+	struct http_server *srv = calloc(1, sizeof(struct http_server));
+	if (!srv)
+		return NULL;
+	list_init(&srv->clients);
+	srv->ps = ps;
+	srv->max_clients = db_get_http_connections();
 
 	fd = daemon_get_http_socket();
 	if (fd < 0)
 		fd = http_create_socket();
 	if (fd < 0)
-		return fd;
+		goto fail;
 
 	// make non-blocking
 	ret = set_non_block(fd);
 	if (ret < 0) {
 		close(fd);
-		return ret;
+		goto fail;
 	}
 
 	// Add to event loop. Takes ownership of file descriptor.
-	ret = poll_set_add_io(ps, NULL, fd, POLL_EVENT_IN, http_handle_listen, ps);
+	ret = poll_set_add_io(ps, &srv->listen_ps, fd, POLL_EVENT_IN,
+		http_handle_listen, srv);
 	if (ret < 0) {
 		close(fd);
 		log_fatal("poll_set_add_io failed: %d", ret);
-		return ret;
+		return NULL;
 	}
 
-	return 0;
+	return srv;
+
+fail:
+	poll_source_free(&srv->listen_ps);
+	free(srv);
+	return NULL;
+}
+
+void http_server_delete(struct http_server **srv)
+{
+	if (!*srv)
+		return;
+
+	list_for_each_safe((*srv)->clients, i)
+		http_client_delete(&i);
+	poll_source_free(&(*srv)->listen_ps);
+	free(*srv);
+	*srv = NULL;
 }

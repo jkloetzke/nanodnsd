@@ -19,6 +19,9 @@
 #ifndef HTTP_H
 #define HTTP_H
 
-int http_create_server(struct poll_set *ps);
+struct http_server;
+
+struct http_server* http_server_new(struct poll_set *ps);
+void http_server_delete(struct http_server **srv);
 
 #endif
