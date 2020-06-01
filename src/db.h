@@ -40,7 +40,7 @@ uint16_t db_get_http_port(void);
 uint16_t db_get_http_connections(void);
 uint32_t db_get_http_timeout(void);
 
-int db_get_user(uid_t *uid, gid_t *gid);
+void db_get_user(uid_t *uid, gid_t *gid);
 
 int db_init(const char *cfg);
 

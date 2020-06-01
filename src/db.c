@@ -634,7 +634,7 @@ uint32_t db_get_http_timeout(void)
 	return db.http_timeout;
 }
 
-int db_get_user(uid_t *uid, gid_t *gid)
+void db_get_user(uid_t *uid, gid_t *gid)
 {
 	*uid = db.uid;
 	*gid = db.gid;
