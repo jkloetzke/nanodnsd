@@ -37,3 +37,19 @@ if(libsystemd_FOUND)
 			nanodnsd-dns.socket nanodnsd-http.socket
 		DESTINATION "${SYSTEMD_INSTALL_SYSTEM_UNIT_DIR}")
 endif()
+
+option(ENABLE_FUZZING "Enable build of fuzzing tests")
+if(ENABLE_FUZZING)
+	add_executable(nanodnsd-fuzz
+		fuzz-main.c
+
+		dns.c dns.h
+		poll.c poll.h
+		pkt.c pkt.h
+		utils.c utils.h
+		db.c db.h
+
+		daemon.h poll.h
+	)
+	target_compile_definitions(nanodnsd-fuzz PUBLIC HAVE_SD_DAEMON)
+endif()

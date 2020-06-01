@@ -308,8 +308,10 @@ static ssize_t dns_process_pkt(uint8_t *qbuf, size_t qlen, uint8_t *rbuf, size_t
 
 	pkt_init(&qpkt, qbuf, qlen);
 	struct dns_query *query = dns_query_parse(&qpkt);
-	if (!query)
+	if (!query) {
+		log_dbg("dns_process_pkt: invalid query");
 		return 0;
+	}
 
 	struct dns_reply *reply = db_query(query);
 	if (!reply)
@@ -317,11 +319,11 @@ static ssize_t dns_process_pkt(uint8_t *qbuf, size_t qlen, uint8_t *rbuf, size_t
 
 	pkt_init(&rpkt, rbuf, rlen);
 	ret = dns_reply_dump(query, reply, &rpkt);
-	log_dbg("dns_process_pkt: %zd", ret);
 
 	dns_reply_delete(&reply);
 query_fail:
 	dns_query_delete(&query);
+	log_dbg("dns_process_pkt: %zd", ret);
 	return ret;
 }
 
