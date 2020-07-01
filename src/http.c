@@ -292,7 +292,7 @@ reply:
 		"HTTP/1.1 %03d %s\r\n"
 		"Content-Type: text/plain\r\n"
 		"Content-Length: %zu\r\n"
-		"Server: dynano/0.1.0\r\n"
+		"Server: nanodnsd/0.1.0\r\n"
 		"Connection: close\r\n"
 		"\r\n"
 		"%s",
