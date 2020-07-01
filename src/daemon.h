@@ -26,9 +26,9 @@
 #if HAVE_SD_DAEMON
 int daemon_init(void);
 int daemon_ready(struct poll_set *ps);
-int daemon_get_http_socket(void);
-int daemon_get_dns_udp_socket(void);
-int daemon_get_dns_tcp_socket(void);
+int daemon_get_http_socket(unsigned idx);
+int daemon_get_dns_udp_socket(unsigned idx);
+int daemon_get_dns_tcp_socket(unsigned idx);
 #else
 static inline int daemon_init(void)
 {
@@ -41,18 +41,21 @@ static inline int daemon_ready(struct poll_set *ps)
 	return 0;
 }
 
-static inline int daemon_get_http_socket(void)
+static inline int daemon_get_http_socket(unsigned idx)
 {
+	(void)idx;
 	return -ENOSYS;
 }
 
-static inline int daemon_get_dns_udp_socket(void)
+static inline int daemon_get_dns_udp_socket(unsigned idx)
 {
+	(void)idx;
 	return -ENOSYS;
 }
 
-static inline int daemon_get_dns_tcp_socket(void)
+static inline int daemon_get_dns_tcp_socket(unsigned idx)
 {
+	(void)idx;
 	return -ENOSYS;
 }
 #endif

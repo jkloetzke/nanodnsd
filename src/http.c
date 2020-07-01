@@ -89,10 +89,16 @@ struct http_client
 	struct http_server *server;
 };
 
+struct http_listen
+{
+	struct list_node server_node;
+	struct poll_source *ps;
+};
+
 struct http_server
 {
 	struct poll_set *ps;
-	struct poll_source *listen_ps;
+	LIST_HEAD(struct http_listen, server_node) listen_sources;
 	LIST_HEAD(struct http_client, server_node) clients;
 	unsigned max_clients, num_clients;
 };
@@ -519,43 +525,76 @@ static int http_create_socket(void)
 	return fd;
 }
 
+static struct http_listen *http_listen_new(struct http_server *srv)
+{
+	struct http_listen *l = calloc(1, sizeof(struct http_listen));
+	if (!l)
+		return NULL;
+	list_node_init(&l->server_node);
+	list_add_tail(&srv->listen_sources, l);
+
+	return l;
+}
+
+static void http_listen_delete(struct http_listen **l)
+{
+	if (!*l)
+		return;
+	list_node_del(&(*l)->server_node);
+	poll_source_free(&(*l)->ps);
+	free(*l);
+	*l = NULL;
+}
+
 struct http_server* http_server_new(struct poll_set *ps)
 {
 	int fd, ret;
+	unsigned i;
 
 	struct http_server *srv = calloc(1, sizeof(struct http_server));
 	if (!srv)
 		return NULL;
+	list_init(&srv->listen_sources);
 	list_init(&srv->clients);
 	srv->ps = ps;
 	srv->max_clients = db_get_http_connections();
 
-	fd = daemon_get_http_socket();
+	i = 0;
+	fd = daemon_get_http_socket(i);
 	if (fd < 0)
 		fd = http_create_socket();
 	if (fd < 0)
 		goto fail;
 
-	// make non-blocking
-	ret = set_non_block(fd);
-	if (ret < 0) {
-		close(fd);
-		goto fail;
-	}
+	do {
+		struct http_listen *lps = http_listen_new(srv);
+		if (!lps) {
+			log_err("OOM");
+			goto fail;
+		}
 
-	// Add to event loop. Takes ownership of file descriptor.
-	ret = poll_set_add_io(ps, &srv->listen_ps, fd, POLL_EVENT_IN,
-		http_handle_listen, srv);
-	if (ret < 0) {
-		close(fd);
-		log_fatal("poll_set_add_io failed: %d", ret);
-		return NULL;
-	}
+		// make non-blocking
+		ret = set_non_block(fd);
+		if (ret < 0) {
+			close(fd);
+			goto fail;
+		}
+
+		// Add to event loop. Takes ownership of file descriptor.
+		ret = poll_set_add_io(ps, &lps->ps, fd, POLL_EVENT_IN,
+			http_handle_listen, srv);
+		if (ret < 0) {
+			close(fd);
+			log_fatal("poll_set_add_io failed: %d", ret);
+			return NULL;
+		}
+	} while ((fd = daemon_get_http_socket(++i)) >= 0);
 
 	return srv;
 
 fail:
-	poll_source_free(&srv->listen_ps);
+	list_for_each_safe(srv->listen_sources, i)
+		http_listen_delete(&i);
 	free(srv);
 	return NULL;
 }
@@ -567,7 +606,8 @@ void http_server_delete(struct http_server **srv)
 
 	list_for_each_safe((*srv)->clients, i)
 		http_client_delete(&i);
-	poll_source_free(&(*srv)->listen_ps);
+	list_for_each_safe((*srv)->listen_sources, i)
+		http_listen_delete(&i);
 	free(*srv);
 	*srv = NULL;
 }

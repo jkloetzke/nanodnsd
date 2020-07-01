@@ -47,11 +47,16 @@ struct dns_tcp_client
 	struct dns_server *server;
 };
 
+struct dns_listen
+{
+	struct list_node server_node;
+	struct poll_source *ps;
+};
+
 struct dns_server
 {
 	struct poll_set *ps;
-	struct poll_source *listen_ps_udp;
-	struct poll_source *listen_ps_tcp;
+	LIST_HEAD(struct dns_listen, server_node) listen_sources;
 	LIST_HEAD(struct dns_tcp_client, server_node) clients;
 	unsigned max_clients, num_clients;
 };
@@ -698,14 +703,37 @@ static int dns_create_udp_socket(void)
 	return fd;
 }
 
+static struct dns_listen *dns_listen_new(struct dns_server *srv)
+{
+	struct dns_listen *l = calloc(1, sizeof(struct dns_listen));
+	if (!l)
+		return NULL;
+	list_node_init(&l->server_node);
+	list_add_tail(&srv->listen_sources, l);
+
+	return l;
+}
+
+static void dns_listen_delete(struct dns_listen **l)
+{
+	if (!*l)
+		return;
+	list_node_del(&(*l)->server_node);
+	poll_source_free(&(*l)->ps);
+	free(*l);
+	*l = NULL;
+}
+
 struct dns_server* dns_server_new(struct poll_set *ps)
 {
 	int fd, ret;
 	struct dns_server *srv;
+	unsigned i;
 
 	srv = calloc(1, sizeof(struct dns_server));
 	if (!srv)
 		return NULL;
+	list_init(&srv->listen_sources);
 	list_init(&srv->clients);
 	srv->ps = ps;
 	srv->max_clients = db_get_http_connections();
@@ -713,60 +741,77 @@ struct dns_server* dns_server_new(struct poll_set *ps)
 	/*
 	 * TCP
 	 */
-
-	fd = daemon_get_dns_tcp_socket();
+	i = 0;
+	fd = daemon_get_dns_tcp_socket(i);
 	if (fd < 0)
 		fd = dns_create_tcp_socket();
 	if (fd < 0)
 		goto fail;
 
-	// make non-blocking
-	ret = set_non_block(fd);
-	if (ret < 0) {
-		close(fd);
-		goto fail;
-	}
+	do {
+		struct dns_listen *lps = dns_listen_new(srv);
+		if (!lps) {
+			log_err("OOM");
+			goto fail;
+		}
 
-	// Add to event loop. Takes ownership of file descriptor.
-	ret = poll_set_add_io(ps, &srv->listen_ps_tcp, fd, POLL_EVENT_IN,
-		dns_handle_tcp_listen, srv);
-	if (ret < 0) {
-		close(fd);
-		log_fatal("poll_set_add_io(tcp) failed: %d", ret);
-		goto fail;
-	}
+		// make non-blocking
+		ret = set_non_block(fd);
+		if (ret < 0) {
+			close(fd);
+			goto fail;
+		}
+
+		// Add to event loop. Takes ownership of file descriptor.
+		ret = poll_set_add_io(ps, &lps->ps, fd, POLL_EVENT_IN,
+			dns_handle_tcp_listen, srv);
+		if (ret < 0) {
+			close(fd);
+			log_fatal("poll_set_add_io(tcp) failed: %d", ret);
+			goto fail;
+		}
+	} while ((fd = daemon_get_dns_tcp_socket(++i)) >= 0);
 
 	/*
 	 * UDP
 	 */
 
-	fd = daemon_get_dns_udp_socket();
+	i = 0;
+	fd = daemon_get_dns_udp_socket(i);
 	if (fd < 0)
 		fd = dns_create_udp_socket();
 	if (fd < 0)
 		goto fail;
 
-	// make non-blocking
-	ret = set_non_block(fd);
-	if (ret < 0) {
-		close(fd);
-		goto fail;
-	}
+	do {
+		struct dns_listen *lps = dns_listen_new(srv);
+		if (!lps) {
+			log_err("OOM");
+			goto fail;
+		}
 
-	// Add to event loop. Takes ownership of file descriptor.
-	ret = poll_set_add_io(ps, &srv->listen_ps_udp, fd, POLL_EVENT_IN,
-		dns_handle_udp, NULL);
-	if (ret < 0) {
-		close(fd);
-		log_fatal("poll_set_add_io(udp) failed: %d", ret);
-		goto fail;
-	}
+		// make non-blocking
+		ret = set_non_block(fd);
+		if (ret < 0) {
+			close(fd);
+			goto fail;
+		}
+
+		// Add to event loop. Takes ownership of file descriptor.
+		ret = poll_set_add_io(ps, &lps->ps, fd, POLL_EVENT_IN,
+			dns_handle_udp, NULL);
+		if (ret < 0) {
+			close(fd);
+			log_fatal("poll_set_add_io(udp) failed: %d", ret);
+			goto fail;
+		}
+	} while ((fd = daemon_get_dns_udp_socket(++i)) >= 0);
 
 	return srv;
 
 fail:
-	poll_source_free(&srv->listen_ps_udp);
-	poll_source_free(&srv->listen_ps_tcp);
+	list_for_each_safe(srv->listen_sources, i)
+		dns_listen_delete(&i);
 	free(srv);
 	return NULL;
 }
@@ -778,8 +823,8 @@ void dns_server_delete(struct dns_server **srv)
 
 	list_for_each_safe((*srv)->clients, i)
 		dns_tcp_client_delete(&i);
-	poll_source_free(&(*srv)->listen_ps_udp);
-	poll_source_free(&(*srv)->listen_ps_tcp);
+	list_for_each_safe((*srv)->listen_sources, i)
+		dns_listen_delete(&i);
 	free(*srv);
 	*srv = NULL;
 }

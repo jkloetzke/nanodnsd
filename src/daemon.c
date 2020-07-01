@@ -24,9 +24,35 @@
 #include "daemon.h"
 #include "log.h"
 
-static int daemon_http_socket = -ENOENT;
-static int daemon_dns_udp_socket = -ENOENT;
-static int daemon_dns_tcp_socket = -ENOENT;
+enum socket_type
+{
+	SOCK_TYPE_INVALID = 0,
+	SOCK_TYPE_HTTP,
+	SOCK_TYPE_DNS_UDP,
+	SOCK_TYPE_DNS_TCP,
+};
+
+struct daemon_socket
+{
+	int fd;
+	enum socket_type type;
+};
+
+static unsigned daemon_sockets_num;
+static struct daemon_socket *daemon_sockets;
+
+static int daemon_socket_get(unsigned idx, enum socket_type type)
+{
+	for (unsigned i = 0; i < daemon_sockets_num; i++) {
+		if (daemon_sockets[i].type != type)
+			continue;
+		if (idx == 0U)
+			return daemon_sockets[i].fd;
+		idx--;
+	}
+
+	return -ENOENT;
+}
 
 static int daemon_wd_timer(void *ctx)
 {
@@ -55,24 +81,32 @@ int daemon_init(void)
 	if (nfds < 0)
 		return nfds;
 
-	if (nfds && !names) {
-		log_fatal("No FileDescriptorName= available to passed sockets!");
-		return -EINVAL;
+	if (nfds) {
+		if (!names) {
+			log_fatal("No FileDescriptorName= available to passed sockets!");
+			return -EINVAL;
+		}
+
+		daemon_sockets = calloc(nfds, sizeof(daemon_sockets[0]));
+		if (!daemon_sockets)
+			return -ENOMEM;
+		daemon_sockets_num = nfds;
 	}
 
 	for (int i = 0; i < nfds; i++) {
 		int fd = SD_LISTEN_FDS_START + i;
 
+		daemon_sockets[i].fd = fd;
 		if (strcmp(names[i], "dns") == 0) {
 			if (sd_is_socket(fd, AF_UNSPEC, SOCK_STREAM, 1) > 0)
-				daemon_dns_tcp_socket = fd;
+				daemon_sockets[i].type = SOCK_TYPE_DNS_TCP;
 			else if (sd_is_socket(fd, AF_UNSPEC, SOCK_DGRAM, -1) > 0)
-				daemon_dns_udp_socket = fd;
+				daemon_sockets[i].type = SOCK_TYPE_DNS_UDP;
 			else
 				log_err("Unknown dns socket passsed! Ignoring.");
 		} else if (strcmp(names[i], "http") == 0) {
 			if (sd_is_socket(fd, AF_UNSPEC, SOCK_STREAM, 1) > 0)
-				daemon_http_socket = fd;
+				daemon_sockets[i].type = SOCK_TYPE_HTTP;
 			else
 				log_err("Unknown http socket passsed! Ignoring.");
 		} else {
@@ -105,17 +139,17 @@ int daemon_ready(struct poll_set *ps)
 	return 0;
 }
 
-int daemon_get_http_socket(void)
+int daemon_get_http_socket(unsigned idx)
 {
-	return daemon_http_socket;
+	return daemon_socket_get(idx, SOCK_TYPE_HTTP);
 }
 
-int daemon_get_dns_udp_socket(void)
+int daemon_get_dns_udp_socket(unsigned idx)
 {
-	return daemon_dns_udp_socket;
+	return daemon_socket_get(idx, SOCK_TYPE_DNS_UDP);
 }
 
-int daemon_get_dns_tcp_socket(void)
+int daemon_get_dns_tcp_socket(unsigned idx)
 {
-	return daemon_dns_tcp_socket;
+	return daemon_socket_get(idx, SOCK_TYPE_DNS_TCP);
 }
