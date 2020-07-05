@@ -43,5 +43,7 @@ uint32_t db_get_http_timeout(void);
 void db_get_user(uid_t *uid, gid_t *gid);
 
 int db_init(const char *cfg);
+int db_load_state(const char *cfg);
+int db_save_state(const char *cfg);
 
 #endif

@@ -76,6 +76,7 @@ static struct db db = {
 	.http_timeout = DEFAULT_TCP_LINGER_TIME,
 };
 static int (*parser)(const char *key, const char *value);
+static struct db_entry *parser_entry;
 
 
 static int strlcpylower(char *dst, const char *src, size_t n)
@@ -202,6 +203,24 @@ static int strtouint16(const char *s, uint16_t *v)
 		return -ERANGE;
 
 	*v = (uint16_t)ret;
+	return 0;
+}
+
+static int strtouint32(const char *s, uint32_t *v)
+{
+	char *end;
+
+	if (*s == '\0')
+		return -EINVAL;
+
+	unsigned long long ret = strtoull(s, &end, 10);
+	if (*end != '\0')
+		return -EINVAL;
+
+	if (ret > UINT32_MAX)
+		return -ERANGE;
+
+	*v = (uint32_t)ret;
 	return 0;
 }
 
@@ -508,6 +527,43 @@ static int db_parse_http(const char *key, const char *value)
 	return 0;
 }
 
+static int db_parse_a(struct db_entry *entry, const char *value)
+{
+	struct in_addr ipv4;
+	int ret = inet_pton(AF_INET, value, &ipv4);
+	if (ret <= 0) {
+		log_err("Invalid a= key: '%s'", value);
+		return -EINVAL;
+	}
+
+	struct dns_rr *a = dns_rr_new(entry->name, TYPE_A, DEFAULT_ENTRY_TTL);
+	if (!a)
+		return -ENOMEM;
+	memcpy(a->u.a, &ipv4, 4);
+	dns_rr_add(&entry->rr, a);
+
+	return 0;
+}
+
+static int db_parse_aaaa(struct db_entry *entry, const char *value)
+{
+	struct in6_addr ipv6;
+	int ret = inet_pton(AF_INET6, value, &ipv6);
+	if (ret <= 0) {
+		log_err("Invalid aaaa= key: '%s'", value);
+		return -EINVAL;
+	}
+
+	struct dns_rr *aaaa = dns_rr_new(entry->name, TYPE_AAAA,
+			DEFAULT_ENTRY_TTL);
+	if (!aaaa)
+		return -ENOMEM;
+	memcpy(aaaa->u.aaaa, &ipv6, 16);
+	dns_rr_add(&entry->rr, aaaa);
+
+	return 0;
+}
+
 static int db_parse_host(const char *key, const char *value)
 {
 	if (strcmp(key, "token") == 0) {
@@ -522,33 +578,9 @@ static int db_parse_host(const char *key, const char *value)
 		}
 		db.entries->expire = now_monotonic() + db.entries->timeout;
 	} else if (strcmp(key, "a") == 0) {
-		struct in_addr ipv4;
-		int ret = inet_pton(AF_INET, value, &ipv4);
-		if (ret <= 0) {
-			log_err("Invalid a= key: '%s'", value);
-			return -EINVAL;
-		}
-
-		struct dns_rr *a = dns_rr_new(db.entries->name, TYPE_A,
-				DEFAULT_ENTRY_TTL);
-		if (!a)
-			return -ENOMEM;
-		memcpy(a->u.a, &ipv4, 4);
-		dns_rr_add(&db.entries->rr, a);
+		return db_parse_a(db.entries, value);
 	} else if (strcmp(key, "aaaa") == 0) {
-		struct in6_addr ipv6;
-		int ret = inet_pton(AF_INET6, value, &ipv6);
-		if (ret <= 0) {
-			log_err("Invalid aaaa= key: '%s'", value);
-			return -EINVAL;
-		}
-
-		struct dns_rr *aaaa = dns_rr_new(db.entries->name, TYPE_AAAA,
-				DEFAULT_ENTRY_TTL);
-		if (!aaaa)
-			return -ENOMEM;
-		memcpy(aaaa->u.aaaa, &ipv6, 16);
-		dns_rr_add(&db.entries->rr, aaaa);
+		return db_parse_aaaa(db.entries, value);
 	} else {
 		log_err("Unknown [@...] key: '%s'", key);
 		return -EINVAL;
@@ -595,6 +627,72 @@ static int db_parsed_key(const char *key, const char *value)
 	}
 
 	return parser(key, value);
+}
+
+
+static int db_state_parse_host(const char *key, const char *value)
+{
+	if (!parser_entry)
+		return 0;
+
+	if (strcmp(key, "expire") == 0) {
+		uint32_t expire;
+		if (strtouint32(value, &expire) < 0) {
+			log_err("Invalid expire= timeout: '%s'", value);
+			return -EINVAL;
+		}
+		uint32_t now = now_monotonic();
+		parser_entry->expire = realime_to_monotonic(expire);
+		if (time_after(parser_entry->expire, now + parser_entry->timeout)) {
+			// expiration time shortened
+			parser_entry->expire = now + parser_entry->timeout;
+		} else if (time_after(now, expire)) {
+			// has expired meanwhile
+			dns_rr_delete(&parser_entry->rr);
+			parser_entry = NULL;
+		}
+	} else if (strcmp(key, "a") == 0) {
+		return db_parse_a(parser_entry, value);
+	} else if (strcmp(key, "aaaa") == 0) {
+		return db_parse_aaaa(parser_entry, value);
+	} else {
+		log_err("Unknown [@...] key: '%s'", key);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int db_state_parsed_section(const char *section)
+{
+	if (section[0] == '@') {
+		parser = db_state_parse_host;
+		parser_entry = db.entries;
+		while (parser_entry && strcmp(parser_entry->name, section+1))
+			parser_entry = parser_entry->next;
+
+		if (!parser_entry)
+			log_info("State entry '%s' not matched in cfg", section+1);
+		else if (!parser_entry->token) {
+			log_dbg("Ignore state of static entry '%s'", section+1);
+			parser_entry = NULL;
+		} else
+			dns_rr_delete(&parser_entry->rr);
+	} else {
+		log_err("Invalid state section: '%s'", section);
+		parser = NULL;
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int db_state_parsed_key(const char *key, const char *value)
+{
+	if (parser)
+		return parser(key, value);
+	else
+		return 0;
 }
 
 /*****************************************************************************/
@@ -708,4 +806,81 @@ int db_init(const char *cfg)
 	}
 
 	return 0;
+}
+
+int db_load_state(const char *cfg)
+{
+	int ret = parse_ini_file(cfg, db_state_parsed_section,
+		db_state_parsed_key);
+	if (ret < 0)
+		log_err("Could not parse %s: %s", cfg, strerror(-ret));
+
+	return ret;
+}
+
+int db_save_state(const char *cfg)
+{
+	FILE *f = fopen(cfg, "w");
+	if (!f)
+		return log_errno_err("cannot create '%s'", cfg);
+
+	int ret = 0;
+	for (struct db_entry *e = db.entries; e; e = e->next) {
+		if (!e->token)
+			continue;
+		if (time_after(now_monotonic(), e->expire))
+			continue;
+
+		ret = fprintf(f, "[@%s]\n", e->name);
+		if (ret < 0)
+			goto out;
+		ret = fprintf(f, "expire=%" PRIu32 "\n",
+			monotonic_to_realime(e->expire));
+		if (ret < 0)
+			goto out;
+
+		for (struct dns_rr *rr = e->rr; rr; rr = rr->next) {
+			switch (rr->type) {
+			case TYPE_A: {
+				struct in_addr ipv4;
+				char buf[INET_ADDRSTRLEN];
+				memcpy(&ipv4, rr->u.a, 4);
+				if (!inet_ntop(AF_INET, &ipv4, buf, sizeof(buf))) {
+					ret = log_errno_err("inet_ntop");
+					goto out;
+				}
+				ret = fprintf(f, "a=%s\n", buf);
+				if (ret < 0)
+					goto out;
+				break;
+			}
+			case TYPE_AAAA: {
+				struct in6_addr ipv6;
+				char buf[INET6_ADDRSTRLEN];
+				memcpy(&ipv6, rr->u.aaaa, 16);
+				if (!inet_ntop(AF_INET6, &ipv6, buf, sizeof(buf))) {
+					ret = log_errno_err("inet_ntop");
+					goto out;
+				}
+				ret = fprintf(f, "aaaa=%s\n", buf);
+				if (ret < 0)
+					goto out;
+				break;
+			}
+			default:
+				break;
+			}
+		}
+	}
+
+out:
+	if (fclose(f) < 0)
+		ret = log_errno_err("close '%s' failed", cfg);
+
+	if (ret < 0) {
+		log_err("Remove state file '%s' due to write errors", cfg);
+		unlink(cfg);
+	}
+
+	return ret;
 }
