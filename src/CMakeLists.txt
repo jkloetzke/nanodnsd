@@ -16,7 +16,8 @@ add_executable(nanodnsd
 	utils.c utils.h
 )
 target_compile_definitions(nanodnsd
-	PUBLIC "CMAKE_INSTALL_FULL_SYSCONFDIR=\"${CMAKE_INSTALL_FULL_SYSCONFDIR}\"")
+	PUBLIC "CMAKE_INSTALL_FULL_SYSCONFDIR=\"${CMAKE_INSTALL_FULL_SYSCONFDIR}\""
+	"CMAKE_INSTALL_FULL_LOCALSTATEDIR=\"${CMAKE_INSTALL_FULL_LOCALSTATEDIR}\"")
 
 # Installation rules
 install(TARGETS nanodnsd
