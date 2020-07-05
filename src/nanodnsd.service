@@ -6,3 +6,4 @@ RefuseManualStart=true
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/nanodnsd
 Sockets=nanodnsd-dns.socket nanodnsd-http.socket
 DynamicUser=true
+StateDirectory=nanodnsd
