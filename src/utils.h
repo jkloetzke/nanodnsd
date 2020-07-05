@@ -28,6 +28,8 @@
 uint32_t now_monotonic(void);
 uint32_t now_monotonic_ms(void);
 uint32_t now_realtime(void);
+uint32_t monotonic_to_realime(uint32_t t);
+uint32_t realime_to_monotonic(uint32_t t);
 
 static inline int time_after_eq(uint32_t lhs, uint32_t rhs)
 {

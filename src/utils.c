@@ -68,6 +68,16 @@ uint32_t now_realtime(void)
 	return (uint32_t)ts.tv_sec;
 }
 
+uint32_t monotonic_to_realime(uint32_t t)
+{
+	return t - now_monotonic() + now_realtime();
+}
+
+uint32_t realime_to_monotonic(uint32_t t)
+{
+	return t - now_realtime() + now_monotonic();
+}
+
 int set_non_block(int fd)
 {
 	int ret = fcntl(fd, F_GETFL);
