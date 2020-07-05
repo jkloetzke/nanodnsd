@@ -17,9 +17,13 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#define _GNU_SOURCE // FIXME: get rid of ppoll
+
 #include <assert.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "list.h"
@@ -29,6 +33,7 @@
 enum poll_source_type {
 	POLL_SOURCE_IO,
 	POLL_SOURCE_TIMER,
+	POLL_SOURCE_SIGNAL,
 };
 
 struct poll_source
@@ -51,6 +56,11 @@ struct poll_source
 			poll_set_timer_cb cb;
 			void *ctx;
 		} timer;
+		struct poll_source_sig {
+			int sig;
+			poll_set_signal_cb cb;
+			void *ctx;
+		} sig;
 	} u;
 };
 
@@ -59,6 +69,9 @@ struct poll_set
 	LIST_HEAD(struct poll_source, set) sources;
 	int running;
 };
+
+static struct poll_set *current_ps;
+static LIST_HEAD(struct poll_source, pending) pending_signals;
 
 
 static struct poll_source *poll_source_new(enum poll_source_type type)
@@ -134,9 +147,32 @@ static int poll_source_dispatch(struct poll_source *src)
 	case POLL_SOURCE_TIMER:
 		ret = src->u.timer.cb(src->u.timer.ctx);
 		break;
+	case POLL_SOURCE_SIGNAL:
+		ret = src->u.sig.cb(src->u.sig.ctx, src->u.sig.sig);
+		break;
 	}
 
 	return ret;
+}
+
+static void poll_set_sig_handler(int sig)
+{
+	if (!current_ps)
+		return;
+
+	/*
+	 * Signals are only allowed while being in ppoll(). So the following is
+	 * safe because we know that nobody fiddles with the source list and
+	 * the sources are not in a pending list (yet).
+	 */
+	list_for_each(current_ps->sources, src) {
+		if (src->type != POLL_SOURCE_SIGNAL)
+			continue;
+		if (src->u.sig.sig != sig)
+			continue;
+
+		list_add_tail(&pending_signals, src);
+	}
 }
 
 
@@ -176,8 +212,11 @@ int poll_set_dispatch(struct poll_set *s)
 	if (!pfd)
 		return -ENOMEM;
 
+	assert(!current_ps);
+	current_ps = s;
 	LIST_HEAD(struct poll_source, pending) pending;
 	list_init(&pending);
+	list_init(&pending_signals);
 
 	int ret = 0;
 	s->running = 1;
@@ -185,6 +224,12 @@ int poll_set_dispatch(struct poll_set *s)
 		uint32_t now = now_monotonic_ms();
 		uint32_t timeout = now + TIMEOUT_MAX;
 		nfds_t len = 0;
+
+		sigset_t sigmask;
+		if (sigprocmask(SIG_SETMASK, NULL, &sigmask) < 0) {
+			ret = -errno;
+			goto out;
+		}
 
 		list_for_each(s->sources, src) {
 			switch (src->type) {
@@ -208,23 +253,28 @@ int poll_set_dispatch(struct poll_set *s)
 				if (time_before_eq(src->u.timer.timeout, timeout))
 					timeout = src->u.timer.timeout;
 				break;
+			case POLL_SOURCE_SIGNAL:
+				sigdelset(&sigmask, src->u.sig.sig);
+				break;
 			}
 		}
 
-		do {
-			ret = poll(pfd, len, timeout - now);
-		} while (ret < 0 && errno == EINTR);
-
-		if (ret < 0) {
+		struct timespec tmo = {
+			.tv_sec  = ((timeout - now) / 1000U),
+			.tv_nsec = ((timeout - now) % 1000U) * 1000000U,
+		};
+		ret = ppoll(pfd, len, &tmo, &sigmask);
+		if (ret < 0 && errno != EINTR) {
 			ret = -errno;
 			goto out;
 		}
 
-		nfds_t i = 0;
 		now = now_monotonic_ms();
 		assert(list_empty(pending));
+		list_move_tail(pending, pending_signals);
+		nfds_t i = 0;
 		list_for_each(s->sources, src) {
-			if (ret == 0 && time_after(timeout, now))
+			if (ret <= 0 && time_after(timeout, now))
 				break;
 
 			switch (src->type) {
@@ -241,6 +291,9 @@ int poll_set_dispatch(struct poll_set *s)
 				if (time_before_eq(src->u.timer.timeout, now))
 					list_add_tail(&pending, src);
 				break;
+			case POLL_SOURCE_SIGNAL:
+				// nothing needed. Already on pending list
+				break;
 			}
 		}
 
@@ -256,6 +309,7 @@ out:
 		list_pop_front(&pending);
 	free(pfd);
 	s->running = 0;
+	current_ps = NULL;
 
 	return ret;
 }
@@ -292,5 +346,36 @@ int poll_set_add_timer(struct poll_set *s, struct poll_source **src,
 
 	if (src)
 		*src = ret;
+	return 0;
+}
+
+int poll_set_add_signal(struct poll_set *s, struct poll_source **src,
+		int sig, poll_set_signal_cb cb, void *ctx)
+{
+	sigset_t mask;
+	sigemptyset(&mask);
+	if (sigaddset(&mask, sig) < 0)
+		return -errno;
+	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0)
+		return -errno;
+
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = poll_set_sig_handler;
+	if (sigaction(sig, &sa, NULL) < 0)
+		return -errno;
+
+	struct poll_source *ret = poll_source_new(POLL_SOURCE_SIGNAL);
+	if (!ret)
+		return -ENOMEM;
+
+	ret->u.sig.sig = sig;
+	ret->u.sig.cb = cb;
+	ret->u.sig.ctx = ctx;
+	list_add_tail(&s->sources, ret);
+
+	if (src)
+		*src = ret;
+
 	return 0;
 }

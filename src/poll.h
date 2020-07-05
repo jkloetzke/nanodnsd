@@ -33,6 +33,7 @@ struct poll_source;
 
 typedef int (*poll_set_io_cb)(void *ctx, int fd, poll_event_t events);
 typedef int (*poll_set_timer_cb)(void *ctx);
+typedef int (*poll_set_signal_cb)(void *ctx, int sig);
 
 void poll_source_free(struct poll_source **src);
 int poll_source_mod_io_enable(struct poll_source *src, poll_event_t events);
@@ -48,5 +49,7 @@ int poll_set_add_io(struct poll_set *s, struct poll_source **src, int fd,
 		poll_event_t events, poll_set_io_cb cb, void *ctx);
 int poll_set_add_timer(struct poll_set *s, struct poll_source **src,
 		uint32_t timeout, poll_set_timer_cb cb, void *ctx);
+int poll_set_add_signal(struct poll_set *s, struct poll_source **src,
+		int sig, poll_set_signal_cb cb, void *ctx);
 
 #endif
