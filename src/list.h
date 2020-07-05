@@ -97,4 +97,21 @@ static inline void list_node_del(struct list_node *e)
 	     (((uintptr_t)var__ + sizeof((head__).offsetvar[0].off)) != (uintptr_t)&(head__).head) && (var__##_next = (typeof((head__).typevar[0]) *)((uintptr_t)((struct list_node *)((uintptr_t)var__ + sizeof((head__).offsetvar[0].off)))->next - sizeof((head__).offsetvar[0].off)), 1); \
 	     var__ = var__##_next)
 
+
+static inline void list_head_move__(struct list_node *dst, struct list_node *src)
+{
+	src->prev->next = dst;
+	src->next->prev = dst->prev;
+	dst->prev->next = src->next;
+	dst->prev = src->prev;
+
+	list_node_init(src);
+}
+
+#define list_move_tail(dst_head__, src_head__) \
+	do { \
+		if (!list_empty(src_head__)) \
+			list_head_move__(&(dst_head__).head, &(src_head__).head); \
+	} while (0)
+
 #endif
