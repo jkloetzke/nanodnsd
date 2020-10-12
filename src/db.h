@@ -28,7 +28,7 @@ struct in6_addr;
 struct dns_reply;
 struct dns_query;
 
-struct dns_reply *db_query(struct dns_query *query);
+int db_query(struct dns_query *query, struct dns_reply *reply);
 int db_update(const char *hostname, const char *token, struct in_addr *ipv4,
 		struct in6_addr *ipv6);
 
@@ -39,6 +39,7 @@ uint32_t db_get_tcp_timeout(void);
 uint16_t db_get_http_port(void);
 uint16_t db_get_http_connections(void);
 uint32_t db_get_http_timeout(void);
+uint32_t db_get_rate_limit(void);
 
 void db_get_user(uid_t *uid, gid_t *gid);
 

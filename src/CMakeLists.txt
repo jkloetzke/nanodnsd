@@ -19,6 +19,9 @@ target_compile_definitions(nanodnsd
 	PUBLIC "CMAKE_INSTALL_FULL_SYSCONFDIR=\"${CMAKE_INSTALL_FULL_SYSCONFDIR}\""
 	"CMAKE_INSTALL_FULL_LOCALSTATEDIR=\"${CMAKE_INSTALL_FULL_LOCALSTATEDIR}\"")
 
+pkg_check_modules(libcrypto REQUIRED IMPORTED_TARGET libcrypto libcrypto)
+target_link_libraries(nanodnsd PUBLIC PkgConfig::libcrypto)
+
 # Installation rules
 install(TARGETS nanodnsd
 	RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"

@@ -25,6 +25,41 @@
 #include "pkt.h"
 #include "utils.h"
 
+int pkt_skip_octets(struct pkt *pkt, size_t num)
+{
+	if ((pkt->idx + num) > pkt->len)
+		return -EFAULT;
+	pkt->idx += num;
+	return num;
+}
+
+// RFC1035 3.2.1.
+int pkt_skip_rr(struct pkt *pkt)
+{
+	int skipped = 0;
+
+	int ret = pkt_get_name(pkt, NULL);
+	if (ret < 0)
+		return ret;
+	skipped += ret;
+
+	// TYPE, CLASS, TTL
+	if ((ret = pkt_skip_octets(pkt, 2+2+4)) < 0)
+		return ret;
+	skipped += ret;
+
+	uint16_t rdlength;
+	if ((ret = pkt_get_uint16(pkt, &rdlength)) < 0)
+		return ret;
+	skipped += ret;
+
+	if ((ret = pkt_skip_octets(pkt, rdlength)) < 0)
+		return ret;
+	skipped += ret;
+
+	return skipped;
+}
+
 int pkt_get_uint16(struct pkt *pkt, uint16_t *out)
 {
 	uint16_t tmp;
@@ -39,6 +74,21 @@ int pkt_get_uint16(struct pkt *pkt, uint16_t *out)
 	return sizeof(uint16_t);
 }
 
+int pkt_get_uint32(struct pkt *pkt, uint32_t *out)
+{
+	uint32_t tmp;
+
+	if ((pkt->idx + sizeof(uint32_t)) > pkt->len)
+		return -EFAULT;
+
+	memcpy(&tmp, pkt->buf + pkt->idx, sizeof(uint32_t));
+	pkt->idx += 4u;
+	*out = ntohl(tmp);
+
+	return sizeof(uint32_t);
+}
+
+// RFC1035 3.1.
 int pkt_get_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
 {
 	int ret;
@@ -62,16 +112,14 @@ int pkt_get_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
 			if ((ret = utils_validate_label((char *)(pkt->buf + idx), hdr)) < 0)
 				return ret;
 
-			name[len++] = '.';
-			memcpy(name + len, pkt->buf + idx, hdr);
+			if (name) {
+				name[len++] = '.';
+				memcpy(name + len, pkt->buf + idx, hdr);
+			}
 			len += hdr;
 			idx += hdr;
 		} else if (hdr >= 0xC0u) {
-			// Only backward references are supported. What should
-			// we do with the parsing position on forward
-			// references?
-			if ((hdr & 0x3fu) >= idx)
-				return -ENOTSUP;
+			// Message compression RFC1035 4.1.4.
 			idx = hdr & 0x3fu;
 		} else
 			return -EINVAL;
@@ -83,7 +131,19 @@ int pkt_get_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
 	if (i == 0u)
 		return -EINVAL;
 
-	name[len] = '\0';
+	if (name)
+		name[len] = '\0';
+	return len;
+}
+
+int pkt_get_blob(struct pkt *pkt, void *buf, size_t len)
+{
+	if ((pkt->idx + len) > pkt->len)
+		return -EFAULT;
+
+	memcpy(buf, pkt->buf + pkt->idx, len);
+	pkt->idx += len;
+
 	return len;
 }
 

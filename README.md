@@ -3,6 +3,11 @@ NanoDNS dynamic DNS server
 
 This is a tiny DNS server that is meant to be used for dynamic DNS setups.
 
+# Requirements
+
+* OpenSSL >= 1.x.x
+* Systemd (optional)
+
 # Installation
 
     mkdir build

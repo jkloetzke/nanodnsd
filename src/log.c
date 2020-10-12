@@ -17,6 +17,22 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <arpa/inet.h>
+#include <inttypes.h>
+
 #include "log.h"
 
 int log_level = LOG_LEVEL_ERR;
+
+const char *log_ntop(struct sockaddr_in6 *addr)
+{
+        static char tmp[INET6_ADDRSTRLEN + 16] = "[";
+
+        if (!inet_ntop(AF_INET6, &addr->sin6_addr, tmp+1, sizeof(tmp)-1U))
+                return "<unknown>";
+
+        size_t e = strlen(tmp);
+        snprintf(tmp + e, sizeof(tmp) - e, "]:%" PRIu16, ntohs(addr->sin6_port));
+
+        return tmp;
+}

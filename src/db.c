@@ -60,6 +60,8 @@ struct db
 	uint16_t http_connections;
 	uint32_t http_timeout;
 
+	uint32_t rate_limit;
+
 	uid_t uid;
 	gid_t gid;
 };
@@ -74,6 +76,8 @@ static struct db db = {
 	.http_port = 80,
 	.http_connections = DEFAULT_TCP_CONNECTIONS,
 	.http_timeout = DEFAULT_TCP_LINGER_TIME,
+
+	.rate_limit = DEFAULT_RATE_LIMIT,
 };
 static int (*parser)(const char *key, const char *value);
 static struct db_entry *parser_entry;
@@ -316,18 +320,13 @@ static struct db_entry *db_find(char name[MAX_NAME_SIZE+1])
 	return ret;
 }
 
-struct dns_reply *db_query(struct dns_query *query)
+int db_query(struct dns_query *query, struct dns_reply *reply)
 {
-	// only queries
-	if (query->opcode != OP_QUERY) {
-		log_dbg("invalid opcode #%d, id #%" PRIu16, query->opcode, query->id);
-		return dns_reply_new(RCODE_NOT_IMPLEMENTED);
-	}
-
 	// we're only answering IN class requests
 	if (query->cls != CLASS_IN && query->cls != CLASS_Q_ANY) {
 		log_dbg("invalid class #%d, id #%" PRIu16, query->cls, query->id);
-		return dns_reply_new(RCODE_REFUSED);
+		reply->rcode = RCODE_REFUSED;
+		return 0;
 	}
 
 	// Is this even managed by us? We are just an authorative server and
@@ -335,23 +334,21 @@ struct dns_reply *db_query(struct dns_query *query)
 	char name[MAX_NAME_SIZE+1];
 	if (strlcpylower(name, query->name, sizeof(name)) < 0) {
 		log_err("query name too long: %zu", strlen(query->name));
-		return dns_reply_new(RCODE_SERVER_FAILURE);
+		reply->rcode = RCODE_SERVER_FAILURE;
+		return 0;
 	}
 	if (db_in_zone(name) <= 0) {
 		log_dbg("unmanaged name '%s', id #%" PRIu16, query->name, query->id);
-		return dns_reply_new(RCODE_REFUSED);
+		reply->rcode = RCODE_REFUSED;
+		return 0;
 	}
-
-	struct dns_reply *reply = dns_reply_new(RCODE_NO_ERROR);
-	if (!reply)
-		return NULL;
 
 	// find entry
 	struct db_entry *entry = db_find(name);
 	if (!entry) {
 		reply->rcode = RCODE_NAME_ERROR;
 		dns_rr_add(&reply->authority, db_get_soa_rr());
-		return reply;
+		return 0;
 	}
 
 	// prune RRs if expired
@@ -370,7 +367,7 @@ struct dns_reply *db_query(struct dns_query *query)
 	if (!reply->answer)
 		dns_rr_add(&reply->authority, db_get_soa_rr());
 
-	return reply;
+	return 1;
 }
 
 int db_update(const char *hostname, const char *token, struct in_addr *ipv4,
@@ -454,6 +451,11 @@ static int db_parse_server(const char *key, const char *value)
 			return log_errno_err("getgrnam");
 		}
 		db.gid = g->gr_gid;
+	} else if (strcmp(key, "rate_limit") == 0) {
+		if (strtouint32(value, &db.rate_limit) < 0) {
+			log_err("Invalid rate limit: '%s'", value);
+			return -EINVAL;
+		}
 	} else {
 		log_err("Unknown [server] key: '%s'", key);
 		return -EINVAL;
@@ -730,6 +732,11 @@ uint16_t db_get_http_connections(void)
 uint32_t db_get_http_timeout(void)
 {
 	return db.http_timeout;
+}
+
+uint32_t db_get_rate_limit(void)
+{
+	return db.rate_limit;
 }
 
 void db_get_user(uid_t *uid, gid_t *gid)

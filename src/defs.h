@@ -30,4 +30,9 @@
 #define DEFAULT_ORIGIN_TTL 86400 // s
 #define DEFAULT_ENTRY_EXPIRE (60u*60u*24u) // s
 
+#define DEFAULT_RATE_LIMIT 1000 // requests per second
+
+#define SECRET_ROLLOVER (24U*60U*60U*1000U) // ms, secret rollover time
+#define SECRET_INVALIDATE (60U*1000U) // ms, invalidation timeout of old secret
+
 #endif

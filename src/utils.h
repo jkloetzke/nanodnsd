@@ -59,4 +59,11 @@ int parse_ini_file(const char *fn,
 
 int utils_validate_label(const char *buf, size_t len);
 
+#define min(a, b) \
+	({ \
+		typeof((a)) __a = (a); \
+		typeof((b)) __b = (b); \
+		__a < __b ? __a : __b; \
+	})
+
 #endif

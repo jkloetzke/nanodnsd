@@ -43,8 +43,13 @@ static inline size_t pkt_remain(struct pkt *pkt)
 	return pkt->len - pkt->idx;
 }
 
+int pkt_skip_octets(struct pkt *pkt, size_t num);
+int pkt_skip_rr(struct pkt *pkt);
+
 int pkt_get_uint16(struct pkt *pkt, uint16_t *out);
+int pkt_get_uint32(struct pkt *pkt, uint32_t *out);
 int pkt_get_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1]);
+int pkt_get_blob(struct pkt *pkt, void *buf, size_t len);
 
 int pkt_put_uint16(struct pkt *pkt, uint16_t val);
 int pkt_put_uint32(struct pkt *pkt, uint32_t val);

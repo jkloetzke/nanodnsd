@@ -43,6 +43,10 @@ enum rcode
 	RCODE_NAME_ERROR = 3,
 	RCODE_NOT_IMPLEMENTED = 4,
 	RCODE_REFUSED = 5,
+
+	// Extended-RCODEs. Implies an OPT RR in the response.
+	RCODE_BADVERS = 16,	// RFC6891 9.
+	RCODE_BADCOOKIE = 23,	// RFC7873 8.
 };
 
 enum type
@@ -51,6 +55,7 @@ enum type
 	TYPE_NS = 2,
 	TYPE_SOA = 6,
 	TYPE_AAAA = 28,
+	TYPE_OPT = 41,
 
 	TYPE_Q_ALL = 255,
 };
@@ -60,6 +65,11 @@ enum cls
 	CLASS_IN = 1,
 
 	CLASS_Q_ANY = 255,
+};
+
+enum edns
+{
+	EDNS_OPT_COOKIE = 10,	// RFC7873 8.
 };
 
 struct dns_rr
@@ -86,30 +96,58 @@ struct dns_rr
 	} u;
 };
 
+/**
+ * DNS client or server cookie.
+ *
+ * Our server cookie has the same length as the client cookie to simplify the
+ * implementation.
+ */
+struct dns_cookie
+{
+	uint8_t cookie[8];
+};
+
 struct dns_query
 {
-	uint16_t id;
-	enum opcode opcode;
-	uint16_t rd : 1;
+	uint16_t id;                    // transaction id
+	enum opcode opcode;             // should be OP_QUERY
+	enum rcode err;                 // Error response if query is wrong
+
+	uint16_t question : 1;          // question present (QDCOUNT == 1)
+	uint16_t rd : 1;                // RFC1035 4.1.1 recursion desired
+	uint16_t edns : 1;              // RFC6891 OPT Pseudo-RR received
+	uint16_t cc_present : 1;        // RFC7873 Client DNS cookie received
+	uint16_t sc_present : 1;        // RFC7873 Server DNS cookie received
+
+	// Question fields. Only valid if question is set.
 	char name[MAX_NAME_SIZE+1];
 	enum type type;
 	enum cls cls;
+
+	uint16_t udp_reply_size;         // standard 512 or EDNS announced size
+	struct dns_cookie client_cookie; // RFC7873 4., valid if cc_present set
+	struct dns_cookie server_cookie; // RFC7873 4., valid if sc_present set
 };
 
 struct dns_reply
 {
 	enum rcode rcode;
+	uint16_t max_size;               // Maximum reply size
 
 	struct dns_rr *answer;
 	struct dns_rr *authority;
+
+	uint16_t rate_limit : 1;        // apply rate limiting
+	uint16_t edns : 1;              // RFC6891 OPT Pseudo-RR required
+	uint16_t cookies : 1;           // Send RFC7873 client+server cookie
+
+	struct dns_cookie client_cookie; // RFC7873 4., valid if cookie set
+	struct dns_cookie server_cookie; // RFC7873 4., valid if cookie set
 };
 
 struct dns_rr *dns_rr_new(char name[MAX_NAME_SIZE+1], enum type type, uint32_t ttl);
 void dns_rr_delete(struct dns_rr **r);
 void dns_rr_add(struct dns_rr **anchor, struct dns_rr *n);
-
-struct dns_reply *dns_reply_new(enum rcode rcode);
-void dns_reply_delete(struct dns_reply **r);
 
 struct dns_server* dns_server_new(struct poll_set *ps);
 void dns_server_delete(struct dns_server **srv);
