@@ -736,7 +736,7 @@ struct dns_server* dns_server_new(struct poll_set *ps)
 	list_init(&srv->listen_sources);
 	list_init(&srv->clients);
 	srv->ps = ps;
-	srv->max_clients = db_get_http_connections();
+	srv->max_clients = db_get_tcp_connections();
 
 	/*
 	 * TCP
