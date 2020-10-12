@@ -265,9 +265,12 @@ static int dns_reply_dump(struct dns_query *query, struct dns_reply *reply,
 	int ret;
 	uint16_t flags = (1u << 15) |
 		((uint16_t)query->opcode << 11) |
-		(1u << 10) |
-		((uint16_t)query->rd << 8) |
-		(uint16_t)reply->rcode;
+		(uint16_t)(reply->rcode & 0x0f);
+
+	if (query->opcode == OP_QUERY) {
+		flags |= 1U << 10; // Authoritative Answer
+		flags |= (uint16_t)query->rd << 8; // Recursion Desired
+	}
 
 	if ((ret = pkt_put_uint16(pkt, query->id)) < 0)
 		return ret;
