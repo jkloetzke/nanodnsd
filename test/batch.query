@@ -1,0 +1,8 @@
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0
+static.dyn.mydomain.test ANY +timeout=1 +tries=1 +retry=0

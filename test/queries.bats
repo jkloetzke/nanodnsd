@@ -102,3 +102,7 @@ load common
 
 	assert_equal $answered 1
 }
+
+@test "Keep TCP connection open for multiple requests" {
+	dig @127.0.0.1 -p $NANODNSD_DNS_TCP +tcp +keepopen -f "$BATS_TEST_DIRNAME/batch.query"
+}
