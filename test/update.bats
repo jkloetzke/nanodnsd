@@ -41,7 +41,7 @@ load common
 	do_query udp "ephemeral.dyn.mydomain.test" ANY
 	assert_equal "$NANODNSD_A" "1.2.3.4"
 
-	sleep 1.5
+	sleep 2
 
 	do_query udp "ephemeral.dyn.mydomain.test" ANY
 	assert_equal "$NANODNSD_A" ""
