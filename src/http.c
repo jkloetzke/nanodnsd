@@ -177,7 +177,7 @@ static enum http_result http_parse_request(struct http_client *client, char *lin
 
 	char *fragment = strchr(url, '#');
 	if (fragment)
-		fragment = '\0';
+		*fragment = '\0';
 	char *query = strchr(url, '?');
 	if (query)
 		*query++ = '\0';
