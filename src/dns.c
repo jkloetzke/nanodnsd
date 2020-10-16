@@ -101,13 +101,18 @@ static const char *dns_type2str(enum type type)
         switch (type) {
 	case TYPE_A: return "A";
 	case TYPE_NS: return "NS";
+	case TYPE_CNAME: return "CNAME";
 	case TYPE_SOA: return "SOA";
+	case TYPE_MX: return "MX";
+	case TYPE_TXT: return "TXT";
 	case TYPE_AAAA: return "AAAA";
 	case TYPE_OPT: return "OPT";
 	case TYPE_Q_ALL: return "ALL";
         }
 
-        return "<unsupported>";
+	static char tmp[16];
+	snprintf(tmp, sizeof(tmp), "TYPE%d", type);
+        return tmp;
 }
 
 static const char *dns_cls2str(enum cls cls)

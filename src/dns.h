@@ -53,7 +53,10 @@ enum type
 {
 	TYPE_A = 1,
 	TYPE_NS = 2,
+	TYPE_CNAME = 5,
 	TYPE_SOA = 6,
+	TYPE_MX = 15,
+	TYPE_TXT = 16,
 	TYPE_AAAA = 28,
 	TYPE_OPT = 41,
 
