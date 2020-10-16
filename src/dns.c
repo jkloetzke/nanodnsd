@@ -49,7 +49,7 @@ struct dns_tcp_client
 	struct list_node server_node;
 	struct dns_server *server;
 
-	struct sockaddr_in6 addr;
+	struct sockaddr_storage addr;
 };
 
 struct dns_listen
@@ -235,7 +235,7 @@ static int dns_rr_dump(struct dns_rr *r, struct pkt *pkt)
  * the old secret is not valid anymore.
  */
 static int dns_cookie_generate(struct dns_server *server,
-	struct dns_cookie *server_cookie, struct in6_addr *from,
+	struct dns_cookie *server_cookie, struct sockaddr_storage *from,
 	struct dns_cookie *client_cookie, bool old)
 {
 	SHA256_CTX ctx;
@@ -246,8 +246,27 @@ static int dns_cookie_generate(struct dns_server *server,
 
 	if (!SHA256_Init(&ctx))
 		return -EIO;
-	if (!SHA256_Update(&ctx, from, sizeof(*from)))
-		return -EIO;
+
+	switch (from->ss_family) {
+	case AF_INET6:
+	{
+		struct in6_addr *in6 = &((struct sockaddr_in6 *)from)->sin6_addr;
+		if (!SHA256_Update(&ctx, in6, sizeof(*in6)))
+			return -EIO;
+		break;
+	}
+	case AF_INET:
+	{
+		struct in_addr *in = &((struct sockaddr_in *)from)->sin_addr;
+		if (!SHA256_Update(&ctx, in, sizeof(*in)))
+			return -EIO;
+		break;
+	}
+	default:
+		// should not happen
+		return -ENOTSUP;
+	}
+
 	if (!SHA256_Update(&ctx, client_cookie, sizeof(*client_cookie)))
 		return -EIO;
 	if (!SHA256_Update(&ctx, old ? server->old_secret : server->cur_secret,
@@ -597,7 +616,7 @@ static int dns_process_edns(struct dns_query *query, struct dns_reply *reply, bo
 }
 
 static int dns_process_cookies(struct dns_server *server, struct dns_query *query,
-	struct dns_reply *reply, struct in6_addr *from, bool udp)
+	struct dns_reply *reply, struct sockaddr_storage *from, bool udp)
 {
 	struct dns_cookie cookie;
 	int ret;
@@ -680,14 +699,29 @@ static int dns_rate_limit_timer(void *ctx)
  * bucket individually.
  */
 static int dns_process_ratelimit(struct dns_server *server, struct dns_reply *reply,
-	struct sockaddr_in6 *from)
+	struct sockaddr_storage *from)
 {
 	if (!reply->rate_limit)
 		return 0;
 
 	uint8_t bucket = 0xaaU;
-	for (int i = 0; i < 16; i++)
-		bucket ^= from->sin6_addr.s6_addr[i];
+	switch (from->ss_family) {
+	case AF_INET6:
+		for (int i = 0; i < 16; i++)
+			bucket ^= ((struct sockaddr_in6 *)from)->sin6_addr.s6_addr[i];
+		break;
+	case AF_INET:
+	{
+		uint32_t addr = ((struct sockaddr_in *)from)->sin_addr.s_addr;
+		addr ^= addr >> 16;
+		addr ^= addr >> 8;
+		bucket = (uint8_t)addr;
+		break;
+	}
+	default:
+		// should never happen
+		return 0;
+	}
 
 	// assume that we never get more than 4 billion packets per second :)
 	uint32_t rate = ++server->rate_count[bucket];
@@ -724,7 +758,7 @@ static int dns_process_ratelimit(struct dns_server *server, struct dns_reply *re
  * @return  <0 Kick rogue client without reply
  */
 static ssize_t dns_process_pkt(struct dns_server *server, uint8_t *qbuf,
-	size_t qlen, uint8_t *rbuf, size_t rlen, struct sockaddr_in6 *from,
+	size_t qlen, uint8_t *rbuf, size_t rlen, struct sockaddr_storage *from,
 	bool udp)
 {
 	struct pkt qpkt, rpkt;
@@ -755,7 +789,7 @@ static ssize_t dns_process_pkt(struct dns_server *server, uint8_t *qbuf,
 		goto query_reply;
 
 	// handle EDNS cookies if present
-	ret = dns_process_cookies(server, query, reply, &from->sin6_addr, udp);
+	ret = dns_process_cookies(server, query, reply, from, udp);
 	if (ret < 0)
 		goto query_fail;
 	if (reply->rcode != RCODE_NO_ERROR)
@@ -1097,7 +1131,7 @@ static int dns_handle_udp(void *ctx, int fd, poll_event_t events)
 	uint8_t qbuf[MAX_DGRAM_SIZE];
 	uint8_t rbuf[MAX_DGRAM_SIZE];
 	ssize_t ret;
-	struct sockaddr_in6 from;
+	struct sockaddr_storage from;
 	socklen_t from_len;
 
 	if (events & (POLL_EVENT_ERR | POLL_EVENT_HUP))

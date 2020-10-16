@@ -79,7 +79,7 @@ int log_level;
 			        __LINE__, ##__VA_ARGS__); \
 	} while (0)
 
-struct sockaddr_in6;
-const char *log_ntop(struct sockaddr_in6 *addr);
+struct sockaddr_storage;
+const char *log_ntop(struct sockaddr_storage *addr);
 
 #endif
