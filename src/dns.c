@@ -220,7 +220,7 @@ static int dns_rr_dump(struct dns_rr *r, struct pkt *pkt)
 			return -EINVAL;
 		}
 
-		pkt_or_uint16(pkt, rdlen_off, pkt->idx - rdlen_off - 2);
+		pkt_or_uint16(pkt, rdlen_off, (uint16_t)(pkt->idx - rdlen_off - 2U));
 	}
 
 	return 0;
@@ -291,14 +291,14 @@ static struct dns_query *dns_query_err(struct dns_query *q, enum rcode err)
 	return q;
 }
 
-static int dns_query_parse_opt(struct pkt *pkt, struct dns_query *query,
+static enum rcode dns_query_parse_opt(struct pkt *pkt, struct dns_query *query,
         uint16_t class, uint32_t ttl, uint16_t rdlen)
 {
         // The OPT wire format is described in RFC6891 6.1.2. There
         // must be at most one OPT-RR. Otherwise a FORMERR must be
         // returned (6.1.1.)
         if (query->edns)
-                return -RCODE_FORMAT_ERROR;
+                return RCODE_FORMAT_ERROR;
         query->edns = 1U;
 
         // RFC6891 6.2.3.: Values lower than 512 MUST be treated as
@@ -307,54 +307,54 @@ static int dns_query_parse_opt(struct pkt *pkt, struct dns_query *query,
 
         // We only support Version 0
         if (((ttl >> 16) & 0xffU) != 0U)
-                return -RCODE_BADVERS;
+                return RCODE_BADVERS;
 
         // Parse individual options
         int ret, remain = rdlen;
         while (remain > 0) {
                 uint16_t code, len;
                 if ((ret = pkt_get_uint16(pkt, &code)) < 0)
-                        return -RCODE_FORMAT_ERROR;
+                        return RCODE_FORMAT_ERROR;
                 remain -= ret;
                 if ((ret = pkt_get_uint16(pkt, &len)) < 0)
-                        return -RCODE_FORMAT_ERROR;
+                        return RCODE_FORMAT_ERROR;
                 remain -= ret;
 
                 switch (code) {
                 case EDNS_OPT_COOKIE:
                         // Check for malformed cookie (RFC7873 5.2.2.)
                         if (len < 8 || (len > 8 && len < 16) || len > 40)
-                                return -RCODE_FORMAT_ERROR;
+                                return RCODE_FORMAT_ERROR;
 
                         query->cc_present = 1;
                         if ((ret = pkt_get_blob(pkt, &query->client_cookie, 8)) < 0)
-                                return -RCODE_FORMAT_ERROR;
+                                return RCODE_FORMAT_ERROR;
                         remain -= ret;
-                        len -= 8;
+                        len = (uint16_t)(len - 8U);
 
                         if (len == 8U) {
                                 query->sc_present = 1;
                                 if ((ret = pkt_get_blob(pkt, &query->server_cookie, len)) < 0)
-                                        return -RCODE_FORMAT_ERROR;
+                                        return RCODE_FORMAT_ERROR;
                         } else {
                                 // Not our server cookie size -> invalid.
                                 // Handle as if not present (RFC7873 5.2.4.)
                                 if ((ret = pkt_skip_octets(pkt, len)) < 0)
-                                        return -RCODE_FORMAT_ERROR;
+                                        return RCODE_FORMAT_ERROR;
                         }
                         remain -= ret;
                         break;
                 default:
                         if ((ret = pkt_skip_octets(pkt, len)) < 0)
-                                return -RCODE_FORMAT_ERROR;
+                                return RCODE_FORMAT_ERROR;
                         remain -= ret;
                 }
         }
 
         if (remain != 0)
-                return -RCODE_FORMAT_ERROR;
+                return RCODE_FORMAT_ERROR;
 
-        return 0;
+        return RCODE_NO_ERROR;
 }
 
 // RFC1035 4.1.
@@ -363,7 +363,6 @@ static struct dns_query *dns_query_parse(struct pkt *query)
 	uint16_t id = 0, flags;
 	uint16_t qd_count, an_count, ns_count, ar_count;
 	uint16_t qtype, qclass;
-	int ret;
 
 	// Essential headers that are required to send a reply at all
 	if (pkt_get_uint16(query, &id) < 0)
@@ -423,6 +422,7 @@ static struct dns_query *dns_query_parse(struct pkt *query)
 	for (unsigned i = 0; i < ar_count; i++) {
 		uint16_t type, class, rdlen;
 		uint32_t ttl;
+		enum rcode rcode;
 
 		if (pkt_get_name(query, NULL) < 0)
 			return dns_query_err(q, RCODE_FORMAT_ERROR);
@@ -438,9 +438,9 @@ static struct dns_query *dns_query_parse(struct pkt *query)
 		// We are only interested in OPT pseudo RRs. Skip everything else.
 		switch (type) {
 	        case TYPE_OPT:
-	                ret = dns_query_parse_opt(query, q, class, ttl, rdlen);
-	                if (ret < 0)
-				return dns_query_err(q, -ret);
+	                rcode = dns_query_parse_opt(query, q, class, ttl, rdlen);
+	                if (rcode != RCODE_NO_ERROR)
+				return dns_query_err(q, rcode);
 			break;
 	        default:
 			if (pkt_skip_octets(query, rdlen) < 0)
@@ -498,7 +498,7 @@ static int dns_reply_dump_edns(struct dns_reply *reply, struct pkt *pkt)
 		return ret;
 
 	// RFC6891 6.1.3.
-	if ((ret = pkt_put_uint16(pkt, (reply->rcode >> 4) << 8)) < 0)
+	if ((ret = pkt_put_uint16(pkt, (uint16_t)((reply->rcode >> 4) << 8))) < 0)
 		return ret;
 	if ((ret = pkt_put_uint16(pkt, 0)) < 0)
 		return ret;
@@ -527,20 +527,20 @@ static int dns_reply_dump(struct dns_query *query, struct dns_reply *reply,
 {
 	int ret;
 	// RFC1035 4.1.1.
-	uint16_t flags = (1u << 15) |
-		((uint16_t)query->opcode << 11) |
-		(uint16_t)(reply->rcode & 0x0f);
+	uint_fast16_t flags = (1U << 15) |
+		(uint_fast16_t)(query->opcode << 11) |
+		(uint_fast16_t)(reply->rcode & 0x0f);
 
 	if (query->opcode == OP_QUERY) {
 		flags |= 1U << 10; // Authoritative Answer
-		flags |= (uint16_t)query->rd << 8; // Recursion Desired
+		flags |= (uint16_t)(query->rd << 8); // Recursion Desired
 	}
 
 	bool edns = reply->edns || reply->cookies || reply->rcode > 15;
 
 	if ((ret = pkt_put_uint16(pkt, query->id)) < 0)
 		return ret;
-	if ((ret = pkt_put_uint16(pkt, flags)) < 0)
+	if ((ret = pkt_put_uint16(pkt, (uint16_t)flags)) < 0)
 		return ret;
 	if ((ret = pkt_put_uint16(pkt, query->question ? 1 : 0)) < 0)
 		return ret;
@@ -581,7 +581,7 @@ static int dns_reply_dump(struct dns_query *query, struct dns_reply *reply,
 	if (tc)
 		pkt_or_uint16(pkt, 2, 1u << 9);
 
-	return pkt->idx;
+	return (int)pkt->idx;
 }
 
 static int dns_process_edns(struct dns_query *query, struct dns_reply *reply, bool udp)
@@ -835,7 +835,7 @@ static void dns_tcp_client_delete(struct dns_tcp_client **client)
 static int dns_try_handle_tcp(struct dns_tcp_client *client)
 {
 	uint16_t len;
-	int ret;
+	ssize_t ret;
 
 	while (client->qlen > 2 && client->rlen == 0) {
 		len = peek_uint16(client->qbuf);
@@ -855,13 +855,13 @@ static int dns_try_handle_tcp(struct dns_tcp_client *client)
 		memmove(client->qbuf, &client->qbuf[len + 2], client->qlen);
 
 		if (ret < 0)
-			return ret;
+			return (int)ret;
 		if (ret == 0)
 			continue;
 
 		poll_source_mod_timer(client->idle_timer, db_get_tcp_timeout());
 		client->rlen = (unsigned)ret + 2u;
-		poke_uint16(client->rbuf, ret);
+		poke_uint16(client->rbuf, (uint16_t)ret);
 
 		while (client->rlen > 0) {
 			ssize_t written;
@@ -1134,7 +1134,7 @@ static int dns_handle_udp(void *ctx, int fd, poll_event_t events)
 			&from, true);
 		if (ret <= 0) {
 			log_warn("%s: dropped due to error: %s",
-				log_ntop(&from), strerror(-ret));
+				log_ntop(&from), strerror((int)-ret));
 			continue;
 		}
 

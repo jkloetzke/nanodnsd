@@ -87,10 +87,10 @@ int daemon_init(void)
 			return -EINVAL;
 		}
 
-		daemon_sockets = calloc(nfds, sizeof(daemon_sockets[0]));
+		daemon_sockets_num = (unsigned)nfds;
+		daemon_sockets = calloc(daemon_sockets_num, sizeof(daemon_sockets[0]));
 		if (!daemon_sockets)
 			return -ENOMEM;
-		daemon_sockets_num = nfds;
 	}
 
 	for (int i = 0; i < nfds; i++) {
@@ -128,7 +128,7 @@ int daemon_ready(struct poll_set *ps)
 		return ret;
 
 	if (ret > 0 && wd_usec > 0) {
-		ret = poll_set_add_timer(ps, NULL, wd_usec / 1000u / 2u,
+		ret = poll_set_add_timer(ps, NULL, (uint32_t)(wd_usec / 1000u / 2u),
 			daemon_wd_timer, NULL);
 		if (ret < 0)
 			return ret;

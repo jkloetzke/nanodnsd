@@ -114,7 +114,7 @@ int poll_source_mod_io_disable(struct poll_source *src, poll_event_t events)
 	if (src->type != POLL_SOURCE_IO)
 		return -EINVAL;
 
-	src->u.io.events &= ~events;
+	src->u.io.events &= (poll_event_t)~events;
 	src->u.io.revents &= src->u.io.events|POLL_EVENT_ERR|POLL_EVENT_HUP;
 
 	// remove from pending list if no events left

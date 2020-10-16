@@ -90,7 +90,7 @@ static int strlcpylower(char *dst, const char *src, size_t n)
 
 	while (--n && *src) {
 		if (*src >= 0x41 && *src <= 0x5A)
-			*dst++ = *src++ + 0x20;
+			*dst++ = (char)(*src++ + 0x20);
 		else
 			*dst++ = *src++;
 	}
@@ -152,7 +152,7 @@ static int strlcpyrname(char *dst, const char *src, size_t sz)
 	// Escape any dots before the @. See RFC 1912 2.2
 	const char *dot = strchr(src, '.');
 	while (dot && dot < at) {
-		size_t len = dot - src;
+		size_t len = (size_t)(dot - src);
 		if (len + 2u > sz)
 			return -ENOSPC;
 		memcpy(dst, src, len);
@@ -166,7 +166,7 @@ static int strlcpyrname(char *dst, const char *src, size_t sz)
 	}
 
 	// copy remaining name part
-	size_t len = at - src;
+	size_t len = (size_t)(at - src);
 	if (len > sz)
 		return -ENOSPC;
 	memcpy(dst, src, len);
@@ -187,7 +187,7 @@ static int strcmp_consttime(const char *s1, const char *s2)
 
 	char res = 0;
 	while (l1--)
-		res |= *s1++ ^ *s2++;
+		res |= (char)(*s1++ ^ *s2++);
 
 	return res == 0;
 }

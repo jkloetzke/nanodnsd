@@ -310,7 +310,7 @@ reply:
 	unsigned off = 0;
 	while (len > 0) {
 		do {
-			written = write(client->fd, &buf[off], len);
+			written = write(client->fd, &buf[off], (size_t)len);
 		} while (written < 0 && errno == EINTR);
 
 		if (written < 0) {
@@ -361,7 +361,7 @@ static int http_handle_data(struct http_client *client)
 			break;
 		}
 
-		client->len -= eol - client->buf + 2;
+		client->len -= (unsigned)(eol - client->buf + 2);
 		memmove(client->buf, eol+2, client->len + 1);
 	}
 

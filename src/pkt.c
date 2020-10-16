@@ -30,7 +30,7 @@ int pkt_skip_octets(struct pkt *pkt, size_t num)
 	if ((pkt->idx + num) > pkt->len)
 		return -EFAULT;
 	pkt->idx += num;
-	return num;
+	return (int)num;
 }
 
 // RFC1035 3.2.1.
@@ -133,7 +133,7 @@ int pkt_get_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
 
 	if (name)
 		name[len] = '\0';
-	return len;
+	return (int)len;
 }
 
 int pkt_get_blob(struct pkt *pkt, void *buf, size_t len)
@@ -144,7 +144,7 @@ int pkt_get_blob(struct pkt *pkt, void *buf, size_t len)
 	memcpy(buf, pkt->buf + pkt->idx, len);
 	pkt->idx += len;
 
-	return len;
+	return (int)len;
 }
 
 int pkt_put_uint16(struct pkt *pkt, uint16_t val)
@@ -203,7 +203,7 @@ int pkt_put_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
 		}
 	}
 
-	return s - name;
+	return (int)(s - name);
 }
 
 int pkt_put_blob(struct pkt *pkt, void *buf, size_t len)
@@ -213,7 +213,7 @@ int pkt_put_blob(struct pkt *pkt, void *buf, size_t len)
 	memcpy(pkt->buf + pkt->idx, buf, len);
 	pkt->idx += len;
 
-	return len;
+	return (int)len;
 }
 
 int pkt_or_uint16(struct pkt *pkt, size_t off, uint16_t val)

@@ -19,6 +19,15 @@ target_compile_definitions(nanodnsd
 	PUBLIC "CMAKE_INSTALL_FULL_SYSCONFDIR=\"${CMAKE_INSTALL_FULL_SYSCONFDIR}\""
 	"CMAKE_INSTALL_FULL_LOCALSTATEDIR=\"${CMAKE_INSTALL_FULL_LOCALSTATEDIR}\"")
 
+set_property(TARGET nanodnsd PROPERTY C_STANDARD 99)
+
+# Enable pedantic checks by default
+option(NANODNS_PREDANTIC "Enable extra warnings and treat all warnigs as errors" ON)
+if(NANODNS_PREDANTIC)
+	target_compile_options(nanodnsd PUBLIC
+		-Wall -Wextra -Wconversion -Wsign-conversion -Werror)
+endif()
+
 pkg_check_modules(libcrypto REQUIRED IMPORTED_TARGET libcrypto libcrypto)
 target_link_libraries(nanodnsd PUBLIC PkgConfig::libcrypto)
 
