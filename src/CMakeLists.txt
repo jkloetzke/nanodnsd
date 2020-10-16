@@ -21,6 +21,14 @@ target_compile_definitions(nanodnsd
 
 set_property(TARGET nanodnsd PROPERTY C_STANDARD 99)
 
+option(NANODNS_HARDENING "Enable security hardening options" ON)
+if(NANODNS_HARDENING)
+	set_property(TARGET nanodnsd PROPERTY POSITION_INDEPENDENT_CODE True)
+	target_compile_options(nanodnsd PUBLIC -fstack-protector-strong)
+	target_compile_definitions(nanodnsd PUBLIC "_FORTIFY_SOURCE=1")
+	target_link_options(nanodnsd PUBLIC -Wl,-z,now -Wl,-z,relro)
+endif()
+
 # Enable pedantic checks by default
 option(NANODNS_PREDANTIC "Enable extra warnings and treat all warnigs as errors" ON)
 if(NANODNS_PREDANTIC)
