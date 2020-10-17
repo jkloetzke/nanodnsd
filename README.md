@@ -1,5 +1,7 @@
 # nanodnsd - NanoDNS dynamic DNS server.
 
+![CMake](https://github.com/jkloetzke/nanodnsd/workflows/CMake/badge.svg)
+
 You own a domain name with a root server and want to run your own dynamic DNS
 service? Then this tiny DNS server might be what you are looking for. It
 implements just the parts that are required for dynamic DNS and focuses on easy
