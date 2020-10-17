@@ -91,9 +91,9 @@ do_query()
 do_update()
 {
 	T="$(mktemp -d)"
-	curl --max-time 3 -s -w '%{stderr}%{http_code}' \
+	curl --max-time 3 -s -w '%{http_code}' \
 		"http://localhost:$NANODNSD_HTTP/api/update?$1" \
-		>"$T/reply" 2>"$T/code"
+		-o "$T/reply" >"$T/code"
 	read -r NANODNSD_STATUS <"$T/code" || true
 	read -r NANODNSD_REPLY <"$T/reply" || true
 	rm -rf "$T"
