@@ -4,7 +4,7 @@ setup()
 	NANODNSD_DNS_UDP=
 	NANODNSD_HTTP=
 
-	coproc ../build/nanodnsd -c "$BATS_TEST_DIRNAME/test.conf" 2>&1 >/dev/null
+	coproc ./nanodnsd -c "$BATS_TEST_DIRNAME/test.conf" 2>&1 >/dev/null
 	local typ port
 	while [[ -z $NANODNSD_DNS_TCP || -z $NANODNSD_DNS_UDP || -z $NANODNSD_HTTP ]] && read -r typ port <&${COPROC[0]} ; do
 		case $typ in
