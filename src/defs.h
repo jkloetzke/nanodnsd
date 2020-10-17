@@ -19,9 +19,10 @@
 #ifndef DEFS_H
 #define DEFS_H
 
-#define MAX_DGRAM_SIZE (4096u)
-#define MAX_LABEL_SIZE (63u)
-#define MAX_NAME_SIZE (255u)
+#define MAX_DGRAM_SIZE (1232u)  // draft-fujiwara-dnsop-avoid-fragmentation-03
+#define MAX_STREAM_SIZE (4096u)	// arbitrary but we should never have that much anyway
+#define MAX_LABEL_SIZE (63u)    // RFC1035 2.3.4.
+#define MAX_NAME_SIZE (255u)    // RFC1035 2.3.4.
 
 #define DEFAULT_TCP_LINGER_TIME (3000u) // ms
 #define DEFAULT_TCP_CONNECTIONS 16

@@ -39,8 +39,8 @@
 
 struct dns_tcp_client
 {
-	uint8_t qbuf[MAX_DGRAM_SIZE];
-	uint8_t rbuf[MAX_DGRAM_SIZE];
+	uint8_t qbuf[MAX_STREAM_SIZE];
+	uint8_t rbuf[MAX_STREAM_SIZE];
 	unsigned qlen, rlen;
 
 	int fd;
@@ -873,7 +873,7 @@ static int dns_try_handle_tcp(struct dns_tcp_client *client)
 
 	while (client->qlen > 2 && client->rlen == 0) {
 		len = peek_uint16(client->qbuf);
-		if (len > MAX_DGRAM_SIZE) {
+		if (len > MAX_STREAM_SIZE-2U) {
 			log_warn("%s: oversized request: %" PRIu16 "B",
 			        log_ntop(&client->addr), len);
 			return -E2BIG;
@@ -1160,7 +1160,8 @@ static int dns_handle_udp(void *ctx, int fd, poll_event_t events)
 
 		size_t len = (size_t)ret;
 		if (len > sizeof(qbuf)) {
-			log_dbg("truncated packet: %zu > %zu", len, sizeof(qbuf));
+			log_warn("%s: drop truncated packet: %zu > %zu",
+				log_ntop(&from), len, sizeof(qbuf));
 			continue;
 		}
 
