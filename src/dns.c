@@ -126,6 +126,21 @@ static const char *dns_cls2str(enum cls cls)
 }
 
 
+static void set_dont_fragment(int fd)
+{
+#ifdef __linux__
+	int opt = IP_PMTUDISC_DO;
+	int ret = setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &opt, sizeof(opt));
+#else
+	int opt = 1;
+	int ret = setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &opt, sizeof(opt));
+#endif
+
+	if (ret < 0)
+		log_errno_warn("could not set Don't Fragment flag on socket");
+}
+
+
 struct dns_rr *dns_rr_new(char name[MAX_NAME_SIZE+1], enum type type, uint32_t ttl)
 {
 	struct dns_rr *ret = calloc(1, sizeof(struct dns_rr));
@@ -1385,6 +1400,8 @@ struct dns_server* dns_server_new(struct poll_set *ps)
 			close(fd);
 			goto fail;
 		}
+
+		set_dont_fragment(fd);
 
 		// Add to event loop. Takes ownership of file descriptor.
 		ret = poll_set_add_io(ps, &lps->ps, fd, POLL_EVENT_IN,
