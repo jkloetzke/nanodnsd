@@ -267,9 +267,12 @@ static int http_handle_request(struct http_client *client)
 		client->update.ipv4 ? &ipv4 : NULL,
 		client->update.ipv6 ? &ipv6 : NULL);
 	if (ret < 0) {
-		if (ret == -EACCES) {
+		if (ret == -EACCES || ret == -ENOENT) {
 			response = "forbidden";
 			result = HTTP_CODE_FORBIDDEN;
+		} else if (ret == -EINVAL) {
+			response = "bad request";
+			result = HTTP_CODE_BAD_REQUEST;
 		} else {
 			result = HTTP_CODE_SERVER_ERROR;
 			response = "update failed";
