@@ -3,7 +3,7 @@ load bats-assert/load
 load common
 
 @test "Update entry" {
-	do_update "hostname=dynamic&token=asdf&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=asdf&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 200
 
 	do_query udp "dynamic.dyn.mydomain.test" ANY
@@ -12,9 +12,9 @@ load common
 }
 
 @test "Overwrite entry" {
-	do_update "hostname=dynamic&token=asdf&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=asdf&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 200
-	do_update "hostname=dynamic&token=asdf&ipv4=8.8.8.8&ipv6=1::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=asdf&ipv4=8.8.8.8&ipv6=1::2"
 	assert_equal "$NANODNSD_STATUS" 200
 
 	do_query udp "dynamic.dyn.mydomain.test" ANY
@@ -23,9 +23,9 @@ load common
 }
 
 @test "Clear entry" {
-	do_update "hostname=dynamic&token=asdf&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=asdf&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 200
-	do_update "hostname=dynamic&token=asdf"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=asdf"
 	assert_equal "$NANODNSD_STATUS" 200
 
 	do_query udp "dynamic.dyn.mydomain.test" ANY
@@ -35,7 +35,7 @@ load common
 }
 
 @test "Expiration of entry" {
-	do_update "hostname=ephemeral&token=asdf&ipv4=1.2.3.4"
+	do_update "hostname=ephemeral.dyn.mydomain.test&token=asdf&ipv4=1.2.3.4"
 	assert_equal "$NANODNSD_STATUS" 200
 
 	do_query udp "ephemeral.dyn.mydomain.test" ANY
@@ -50,18 +50,25 @@ load common
 }
 
 @test "Wrong token is rejected" {
-	do_update "hostname=dynamic&token=wrong&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=wrong&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 403
-	do_update "hostname=dynamic&token=&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 403
-	do_update "hostname=dynamic&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 403
 }
 
 @test "Cannot update static entry" {
-	do_update "hostname=static&token=&ipv4=1.2.3.4"
+	do_update "hostname=static.dyn.mydomain.test&token=&ipv4=1.2.3.4"
 	assert_equal "$NANODNSD_STATUS" 403
-	do_update "hostname=static&ipv4=1.2.3.4"
+	do_update "hostname=static.dyn.mydomain.test&ipv4=1.2.3.4"
+	assert_equal "$NANODNSD_STATUS" 403
+}
+
+@test "Cannot update wrong managed domain" {
+	do_update "hostname=dynamic.foo.mydomain.test&token=asdf&ipv4=1.2.3.4&ipv6=::2"
+	assert_equal "$NANODNSD_STATUS" 403
+	do_update "hostname=dynamic.some.thing.else&token=asdf&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 403
 }
 
@@ -78,7 +85,7 @@ load common
 	(sleep 3 ; exit 250) 3>&- &
 	GUARD=$!
 
-	do_update "hostname=dynamic&token=asdf&ipv4=1.2.3.4&ipv6=::2"
+	do_update "hostname=dynamic.dyn.mydomain.test&token=asdf&ipv4=1.2.3.4&ipv6=::2"
 	assert_equal "$NANODNSD_STATUS" 200
 
 	while [[ $PENDING -gt 0 ]] && wait -n ; do
@@ -95,7 +102,7 @@ load common
 
 @test "Too many clients are kicked FIFO like" {
 	T="$(mktemp -d)"
-	Q="$(printf 'GET /api/update?hostname=dynamic&ipv4=1.2.3.4&ipv6=::1&token=asdf HTTP/1.1\r\n\r\n')"
+	Q="$(printf 'GET /api/update?hostname=dynamic.dyn.mydomain.test&ipv4=1.2.3.4&ipv6=::1&token=asdf HTTP/1.1\r\n\r\n')"
 
 	JOBS=()
 	for i in $(seq 10) ; do

@@ -373,11 +373,14 @@ int db_query(struct dns_query *query, struct dns_reply *reply)
 int db_update(const char *hostname, const char *token, struct in_addr *ipv4,
 		struct in6_addr *ipv6)
 {
-	char name[MAX_LABEL_SIZE+1];
-	name[0] = '.';
-	if (strlcpylower(name+1, hostname, sizeof(name)-1) < 0)
+	char name[MAX_NAME_SIZE+1];
+	if (strlcpydomain(name, hostname, sizeof(name)) < 0)
 		return -EINVAL;
 
+	if (db_in_zone(name) <= 0)
+		return -ENOENT;
+
+	name[strlen(name) - db.origin_len] = '\0'; // cut domain name
 	struct db_entry *e = db.entries;
 	while (e && strcmp(e->name, name) != 0)
 		e = e->next;
