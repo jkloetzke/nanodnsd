@@ -1195,12 +1195,7 @@ static int dns_handle_udp(void *ctx, int fd, poll_event_t events)
 		} while (ret < 0 && errno == EINTR);
 
 		if (ret < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EMSGSIZE || errno == ENOMEM) {
-				log_errno_warn("reply dropped");
-				continue;
-			}
-			return log_errno_fatal("sendto");
+			log_errno_warn("%s: sendto failed", log_ntop(&from));
 		} else if ((size_t)ret < len) {
 			log_warn("reply truncated: %zd < %zu", ret, len);
 		}
