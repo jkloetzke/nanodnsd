@@ -175,10 +175,10 @@ int main(int argc, char **argv)
 	}
 
 	ret = poll_set_dispatch(ps);
-	if (ret >= 0)
-		ret = db_save_state(state);
-	else
-		log_err("Not saving state due to previous errors");
+	if (ret < 0)
+		log_warn("Exit due to previous errors!");
+
+	ret = db_save_state(state);
 
 out:
 	http_server_delete(&http_server);
