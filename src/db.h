@@ -40,6 +40,7 @@ uint16_t db_get_http_port(void);
 uint16_t db_get_http_connections(void);
 uint32_t db_get_http_timeout(void);
 uint32_t db_get_rate_limit(void);
+uint32_t db_get_stats_interval(void);
 
 void db_get_user(uid_t *uid, gid_t *gid);
 

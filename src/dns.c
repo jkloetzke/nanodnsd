@@ -50,6 +50,7 @@ struct dns_tcp_client
 	struct dns_server *server;
 
 	struct sockaddr_storage addr;
+	bool addr_is_ipv4;
 };
 
 struct dns_listen
@@ -77,6 +78,37 @@ struct dns_server
 	uint32_t rate_last_hit;
 	uint32_t rate_count[256];
 	struct poll_source *rate_timer;
+
+	// statistics
+	struct poll_source *stats_timer;
+	struct dns_server_stats {
+		unsigned req_v4;
+		unsigned req_v6;
+		unsigned req_udp;
+		unsigned req_tcp;
+		unsigned req_edns;
+
+		unsigned rsp;
+		unsigned rsp_trunc;
+		unsigned rsp_edns0;
+
+		unsigned qry_ok_success;
+		unsigned qry_ok_empty;
+		unsigned qry_formerr;
+		unsigned qry_servfail;
+		unsigned qry_nxdomain;
+		unsigned qry_notimp;
+		unsigned qry_refused;
+		unsigned qry_badvers;
+		unsigned qry_badcookie;
+		unsigned qry_rate_limited;
+
+		unsigned cookie_none;
+		unsigned cookie_malformed;
+		unsigned cookie_client_only;
+		unsigned cookie_invalid;
+		unsigned cookie_correct;
+	} stat;
 };
 
 
@@ -138,6 +170,27 @@ static void set_dont_fragment(int fd)
 
 	if (ret < 0)
 		log_errno_warn("could not set Don't Fragment flag on socket");
+}
+
+
+static bool is_ipv4(struct sockaddr_storage *addr)
+{
+	switch (addr->ss_family) {
+	case AF_INET6:
+	{
+		// might be an IPv4-mapped IPv6 unicast address
+		struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)addr;
+		unsigned char b = 0;
+		for (int i = 0; i < 10; i++)
+			b |= in6->sin6_addr.s6_addr[i];
+		for (int i = 10; i < 12; i++)
+			b |= (unsigned char)~in6->sin6_addr.s6_addr[i];
+		return b == 0;
+	}
+	case AF_INET:
+	default:
+		return true;
+	}
 }
 
 
@@ -325,8 +378,8 @@ static struct dns_query *dns_query_err(struct dns_query *q, enum rcode err)
 	return q;
 }
 
-static enum rcode dns_query_parse_opt(struct pkt *pkt, struct dns_query *query,
-        uint16_t class, uint32_t ttl, uint16_t rdlen)
+static enum rcode dns_query_parse_opt(struct dns_server *server, struct pkt *pkt,
+	struct dns_query *query, uint16_t class, uint32_t ttl, uint16_t rdlen)
 {
         // The OPT wire format is described in RFC6891 6.1.2. There
         // must be at most one OPT-RR. Otherwise a FORMERR must be
@@ -357,8 +410,10 @@ static enum rcode dns_query_parse_opt(struct pkt *pkt, struct dns_query *query,
                 switch (code) {
                 case EDNS_OPT_COOKIE:
                         // Check for malformed cookie (RFC7873 5.2.2.)
-                        if (len < 8 || (len > 8 && len < 16) || len > 40)
+                        if (len < 8 || (len > 8 && len < 16) || len > 40) {
+				server->stat.cookie_malformed++;
                                 return RCODE_FORMAT_ERROR;
+			}
 
                         query->cc_present = 1;
                         if ((ret = pkt_get_blob(pkt, &query->client_cookie, 8)) < 0)
@@ -392,7 +447,7 @@ static enum rcode dns_query_parse_opt(struct pkt *pkt, struct dns_query *query,
 }
 
 // RFC1035 4.1.
-static struct dns_query *dns_query_parse(struct pkt *query)
+static struct dns_query *dns_query_parse(struct dns_server *server, struct pkt *query)
 {
 	uint16_t id = 0, flags;
 	uint16_t qd_count, an_count, ns_count, ar_count;
@@ -472,7 +527,7 @@ static struct dns_query *dns_query_parse(struct pkt *query)
 		// We are only interested in OPT pseudo RRs. Skip everything else.
 		switch (type) {
 	        case TYPE_OPT:
-	                rcode = dns_query_parse_opt(query, q, class, ttl, rdlen);
+	                rcode = dns_query_parse_opt(server, query, q, class, ttl, rdlen);
 	                if (rcode != RCODE_NO_ERROR)
 				return dns_query_err(q, rcode);
 			break;
@@ -557,7 +612,7 @@ static int dns_reply_dump_edns(struct dns_reply *reply, struct pkt *pkt)
 }
 
 static int dns_reply_dump(struct dns_query *query, struct dns_reply *reply,
-		struct pkt *pkt)
+		struct pkt *pkt, bool *tc)
 {
 	int ret;
 	// RFC1035 4.1.1.
@@ -590,29 +645,28 @@ static int dns_reply_dump(struct dns_query *query, struct dns_reply *reply,
 			return ret;
 	}
 
-	int tc = 0;
-
+	*tc = false;
 	ret = dns_rr_dump(reply->answer, pkt);
 	if (ret == -EFAULT)
-		tc = 1;
+		*tc = true;
 	else if (ret < 0)
 		return ret;
 
 	ret = dns_rr_dump(reply->authority, pkt);
 	if (ret == -EFAULT)
-		tc = 1;
+		*tc = true;
 	else if (ret < 0)
 		return ret;
 
 	if (edns) {
 		ret = dns_reply_dump_edns(reply, pkt);
 		if (ret == -EFAULT)
-			tc = 1;
+			*tc = true;
 		else if (ret < 0)
 			return ret;
 	}
 
-	if (tc)
+	if (*tc)
 		pkt_or_uint16(pkt, 2, 1u << 9);
 
 	return (int)pkt->idx;
@@ -637,8 +691,10 @@ static int dns_process_cookies(struct dns_server *server, struct dns_query *quer
 	int ret;
 
 	// RFC7873 5.2.1.
-	if (!query->cc_present)
+	if (!query->cc_present) {
+		server->stat.cookie_none++;
 		return 0;
+	}
 
 	// RFC7873 5.2.2. already handled by dns_query_parse()
 
@@ -657,10 +713,12 @@ static int dns_process_cookies(struct dns_server *server, struct dns_query *quer
 		// cookie policy. In case of UDP requests we always return a
 		// BADCOOKIE error response. TCP requests will be processed
 		// normally to prevent infinite request loops (see 5.3.).
+		server->stat.cookie_client_only++;
 		if (udp)
 			reply->rcode = RCODE_BADCOOKIE;
 	} else if (dns_cookie_cmp(&cookie, &query->server_cookie) == 0) {
 		// RFC7873 5.2.5. A Client Cookie and a Valid Server Cookie
+		server->stat.cookie_correct++;
 		reply->rate_limit = 0;
 	} else {
 		// RFC7873 5.2.4. A Client Cookie and an Invalid Server Cookie
@@ -668,10 +726,14 @@ static int dns_process_cookies(struct dns_server *server, struct dns_query *quer
 		// or treat as not present.
 		ret = dns_cookie_generate(server, &cookie, from,
 			&query->client_cookie, true);
-		if (ret >= 0 && dns_cookie_cmp(&cookie, &query->server_cookie) == 0)
+		if (ret >= 0 && dns_cookie_cmp(&cookie, &query->server_cookie) == 0) {
+			server->stat.cookie_correct++;
 			reply->rate_limit = 0;
-		else if (udp)
-			reply->rcode = RCODE_BADCOOKIE;
+		} else {
+			server->stat.cookie_invalid++;
+			if (udp)
+				reply->rcode = RCODE_BADCOOKIE;
+		}
 	}
 
 	return 0;
@@ -762,6 +824,7 @@ static int dns_process_ratelimit(struct dns_server *server, struct dns_reply *re
 		}
 	}
 
+	server->stat.qry_rate_limited++;
 	return -EAGAIN;
 }
 
@@ -780,9 +843,12 @@ static ssize_t dns_process_pkt(struct dns_server *server, uint8_t *qbuf,
 	ssize_t ret = 0;
 
 	pkt_init(&qpkt, qbuf, qlen);
-	struct dns_query *query = dns_query_parse(&qpkt);
+	struct dns_query *query = dns_query_parse(server, &qpkt);
 	if (!query)
 		return -EBADMSG; // Pure garbage
+
+	if (query->edns)
+		server->stat.req_edns++;
 
 	struct dns_reply *reply = dns_reply_new(query->err, udp);
 	if (!reply)
@@ -842,7 +908,44 @@ query_reply:
                 log_info("%s: %s query #%" PRIu16 " -> %s", log_ntop(from),
 			udp ? "udp" : "tcp", query->id, dns_rcode2str(reply->rcode));
 	pkt_init(&rpkt, rbuf, min(rlen, reply->max_size));
-	ret = dns_reply_dump(query, reply, &rpkt);
+	bool tc = false;
+	ret = dns_reply_dump(query, reply, &rpkt, &tc);
+
+	server->stat.rsp++;
+	if (tc)
+		server->stat.rsp_trunc++;
+	if (reply->edns)
+		server->stat.rsp_edns0++;
+	switch (reply->rcode) {
+	case RCODE_NO_ERROR:
+		if (reply->answer)
+			server->stat.qry_ok_success++;
+		else
+			server->stat.qry_ok_empty++;
+		break;
+	case RCODE_FORMAT_ERROR:
+		server->stat.qry_formerr++;
+		break;
+	case RCODE_SERVER_FAILURE:
+		server->stat.qry_servfail++;
+		break;
+	case RCODE_NAME_ERROR:
+		server->stat.qry_nxdomain++;
+		break;
+	case RCODE_NOT_IMPLEMENTED:
+		server->stat.qry_notimp++;
+		break;
+	case RCODE_REFUSED:
+		server->stat.qry_refused++;
+		break;
+	case RCODE_BADVERS:
+		server->stat.qry_badvers++;
+		break;
+	case RCODE_BADCOOKIE:
+		server->stat.qry_badcookie++;
+		break;
+	}
+
 	dns_reply_delete(&reply);
 
 query_fail:
@@ -896,6 +999,11 @@ static int dns_try_handle_tcp(struct dns_tcp_client *client)
 		if (client->qlen - 2 < len)
 			break;
 
+		if (client->addr_is_ipv4)
+			client->server->stat.req_v4++;
+		else
+			client->server->stat.req_v6++;
+		client->server->stat.req_tcp++;
 		ret = dns_process_pkt(client->server,
 				client->qbuf + 2, len, client->rbuf + 2,
 				sizeof(client->rbuf) - 2, &client->addr,
@@ -1058,6 +1166,7 @@ static int dns_handle_tcp_listen(void *ctx, int listen_fd, poll_event_t events)
 			dns_tcp_client_delete(&client);
 			continue;
 		}
+		client->addr_is_ipv4 = is_ipv4(&client->addr);
 
 		log_dbg("%s: accepted connection", log_ntop(&client->addr));
 
@@ -1180,6 +1289,11 @@ static int dns_handle_udp(void *ctx, int fd, poll_event_t events)
 			continue;
 		}
 
+		if (is_ipv4(&from))
+			server->stat.req_v4++;
+		else
+			server->stat.req_v6++;
+		server->stat.req_udp++;
 		ret = dns_process_pkt(server, qbuf, len, rbuf, sizeof(rbuf),
 			&from, true);
 		if (ret <= 0) {
@@ -1308,6 +1422,32 @@ static int dns_server_secret_rollover(void *ctx)
 	return poll_source_mod_timer(server->secret_rollover, SECRET_ROLLOVER);
 }
 
+static int dns_server_print_statistics(void *ctx)
+{
+	struct dns_server *server = ctx;
+
+	fprintf(stderr, "statistics:\n");
+	fprintf(stderr, "\trequests: ipv4=%u ipv6=%u udp=%u tcp=%u edns=%u\n",
+		server->stat.req_v4, server->stat.req_v6,
+		server->stat.req_udp, server->stat.req_tcp,
+		server->stat.req_edns);
+	fprintf(stderr, "\tresponses: total=%u trunc=%u edns0=%u\n",
+		server->stat.rsp, server->stat.rsp_trunc, server->stat.rsp_edns0);
+	fprintf(stderr, "\tqueries: success=%u empty=%u formerr=%u servfail=%u nxdomain=%u notimp=%u refused=%u badvers=%u badcookie=%u dropped=%u\n",
+		server->stat.qry_ok_success, server->stat.qry_ok_empty,
+		server->stat.qry_formerr, server->stat.qry_servfail,
+		server->stat.qry_nxdomain, server->stat.qry_notimp,
+		server->stat.qry_refused, server->stat.qry_badvers,
+		server->stat.qry_badcookie, server->stat.qry_rate_limited);
+	fprintf(stderr, "\tcookies: none=%u malformed=%u client_only=%u invalid=%u correct=%u\n",
+		server->stat.cookie_none, server->stat.cookie_malformed,
+		server->stat.cookie_client_only, server->stat.cookie_invalid,
+		server->stat.cookie_correct);
+
+	memset(&server->stat, 0, sizeof(server->stat));
+	return poll_source_mod_timer(server->stats_timer, db_get_stats_interval());
+}
+
 struct dns_server* dns_server_new(struct poll_set *ps)
 {
 	int fd, ret;
@@ -1336,6 +1476,15 @@ struct dns_server* dns_server_new(struct poll_set *ps)
 	}
 	srv->rate_limit = db_get_rate_limit();
 	srv->rate_last_hit = now_monotonic_ms();
+
+	uint32_t stats_interval = db_get_stats_interval();
+	if (stats_interval) {
+		if (poll_set_add_timer(srv->ps, &srv->stats_timer, stats_interval,
+				       dns_server_print_statistics, srv) < 0) {
+			log_err("stats interval timer");
+			goto fail;
+		}
+	}
 
 	/*
 	 * TCP
@@ -1413,6 +1562,7 @@ struct dns_server* dns_server_new(struct poll_set *ps)
 fail:
 	list_for_each_safe(srv->listen_sources, i)
 		dns_listen_delete(&i);
+	poll_source_free(&srv->stats_timer);
 	poll_source_free(&srv->secret_rollover);
 	free(srv);
 	return NULL;
@@ -1428,6 +1578,7 @@ void dns_server_delete(struct dns_server **srv)
 	list_for_each_safe((*srv)->listen_sources, i)
 		dns_listen_delete(&i);
 	poll_source_free(&(*srv)->rate_timer);
+	poll_source_free(&(*srv)->stats_timer);
 	poll_source_free(&(*srv)->secret_rollover);
 	poll_source_free(&(*srv)->secret_invalidate);
 	free(*srv);

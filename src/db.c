@@ -61,6 +61,7 @@ struct db
 	uint32_t http_timeout;
 
 	uint32_t rate_limit;
+	uint32_t stats_interval;
 
 	uid_t uid;
 	gid_t gid;
@@ -78,6 +79,7 @@ static struct db db = {
 	.http_timeout = DEFAULT_TCP_LINGER_TIME,
 
 	.rate_limit = DEFAULT_RATE_LIMIT,
+	.stats_interval = DEFAULT_STATS_INTERVAL,
 };
 static int (*parser)(const char *key, const char *value);
 static struct db_entry *parser_entry;
@@ -459,6 +461,11 @@ static int db_parse_server(const char *key, const char *value)
 			log_err("Invalid rate limit: '%s'", value);
 			return -EINVAL;
 		}
+	} else if (strcmp(key, "stats_interval") == 0) {
+		if (strtotime(value, &db.stats_interval, 1000) < 0) {
+			log_err("Invalid statistics interval: '%s'", value);
+			return -EINVAL;
+		}
 	} else {
 		log_err("Unknown [server] key: '%s'", key);
 		return -EINVAL;
@@ -740,6 +747,11 @@ uint32_t db_get_http_timeout(void)
 uint32_t db_get_rate_limit(void)
 {
 	return db.rate_limit;
+}
+
+uint32_t db_get_stats_interval(void)
+{
+	return db.stats_interval;
 }
 
 void db_get_user(uid_t *uid, gid_t *gid)

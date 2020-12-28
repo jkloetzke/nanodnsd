@@ -33,6 +33,8 @@
 
 #define DEFAULT_RATE_LIMIT 1000 // requests per second
 
+#define DEFAULT_STATS_INTERVAL (24U*60U*60U*1000U) // ms
+
 #define SECRET_ROLLOVER (24U*60U*60U*1000U) // ms, secret rollover time
 #define SECRET_INVALIDATE (60U*1000U) // ms, invalidation timeout of old secret
 
