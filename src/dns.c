@@ -20,8 +20,8 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
+#include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <openssl/sha.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,6 +65,8 @@ struct dns_server
 	LIST_HEAD(struct dns_listen, server_node) listen_sources;
 	LIST_HEAD(struct dns_tcp_client, server_node) clients;
 	unsigned max_clients, num_clients;
+
+	const EVP_MD *sha256_md;
 
         // RFC7873
 	uint8_t cur_secret[16];
@@ -306,45 +308,54 @@ static int dns_cookie_generate(struct dns_server *server,
 	struct dns_cookie *server_cookie, struct sockaddr_storage *from,
 	struct dns_cookie *client_cookie, bool old)
 {
-	SHA256_CTX ctx;
+	EVP_MD_CTX *ctx;
 	unsigned char hash[32];
+	int ret = -EIO;
 
 	if (old && !server->old_secret_valid)
 		return -ENOENT;
 
-	if (!SHA256_Init(&ctx))
-		return -EIO;
+	ctx = EVP_MD_CTX_new();
+	if (!ctx)
+		return -ENOMEM;
+	if (!EVP_DigestInit_ex2(ctx, server->sha256_md, NULL))
+		goto fail;
 
 	switch (from->ss_family) {
 	case AF_INET6:
 	{
 		struct in6_addr *in6 = &((struct sockaddr_in6 *)from)->sin6_addr;
-		if (!SHA256_Update(&ctx, in6, sizeof(*in6)))
-			return -EIO;
+		if (!EVP_DigestUpdate(ctx, in6, sizeof(*in6)))
+			goto fail;
 		break;
 	}
 	case AF_INET:
 	{
 		struct in_addr *in = &((struct sockaddr_in *)from)->sin_addr;
-		if (!SHA256_Update(&ctx, in, sizeof(*in)))
-			return -EIO;
+		if (!EVP_DigestUpdate(ctx, in, sizeof(*in)))
+			goto fail;
 		break;
 	}
 	default:
 		// should not happen
-		return -ENOTSUP;
+		ret = -ENOTSUP;
+		goto fail;
 	}
 
-	if (!SHA256_Update(&ctx, client_cookie, sizeof(*client_cookie)))
-		return -EIO;
-	if (!SHA256_Update(&ctx, old ? server->old_secret : server->cur_secret,
-	                   sizeof(server->cur_secret)))
-		return -EIO;
-	if (!SHA256_Final(hash, &ctx))
-		return -EIO;
+	if (!EVP_DigestUpdate(ctx, client_cookie, sizeof(*client_cookie)))
+		goto fail;
+	if (!EVP_DigestUpdate(ctx, old ? server->old_secret : server->cur_secret,
+	                      sizeof(server->cur_secret)))
+		goto fail;
+	if (!EVP_DigestFinal_ex(ctx, hash, NULL))
+		goto fail;
 
 	memcpy(server_cookie, hash, sizeof(*server_cookie));
 	return 0;
+
+fail:
+	EVP_MD_CTX_free(ctx);
+	return ret;
 }
 
 static void dns_cookie_copy(struct dns_cookie *dst, struct dns_cookie *src)
@@ -1465,6 +1476,11 @@ struct dns_server* dns_server_new(struct poll_set *ps)
 	/*
 	 * DNS cookies. See RFC7873 7.
 	 */
+	srv->sha256_md = EVP_get_digestbyname("SHA256");
+	if (!srv->sha256_md) {
+		log_err("Cannot get OpenSSL SHA256 digest");
+		goto fail;
+	}
 	if (RAND_bytes(srv->cur_secret, sizeof(srv->cur_secret)) <= 0) {
 		log_err("Failed to fetch random data");
 		goto fail;
