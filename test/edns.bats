@@ -29,14 +29,20 @@ load common
 }
 
 @test "Rate limit applies to UDP without cookies" {
-	# "rate_limit" is "3" so the 4th request should time out.
-	refute dig @127.0.0.1 -p $NANODNSD_DNS_UDP +notcp +noedns +nocookie -f "$BATS_TEST_DIRNAME/batch.query"
+	# "rate_limit" is "3" so the 4th and 8th request should time out.
+	do_batch_query -p $NANODNSD_DNS_UDP +notcp +noedns +nocookie +retry=0 -f "$BATS_TEST_DIRNAME/batch.query"
+	assert_equal "$NANODNSD_A" 6
+	assert_equal "$NANODNSD_AAAA" 6
 }
 
 @test "Rate limit does not apply to UDP with cookies" {
-	dig @127.0.0.1 -p $NANODNSD_DNS_UDP +notcp +cookie -f "$BATS_TEST_DIRNAME/batch.query"
+	do_batch_query -p $NANODNSD_DNS_UDP +notcp +cookie -f "$BATS_TEST_DIRNAME/batch.query"
+	assert_equal "$NANODNSD_A" 8
+	assert_equal "$NANODNSD_AAAA" 8
 }
 
 @test "Rate limit does not apply to TCP" {
-	dig @127.0.0.1 -p $NANODNSD_DNS_TCP +tcp +nocookie -f "$BATS_TEST_DIRNAME/batch.query"
+	do_batch_query -p $NANODNSD_DNS_TCP +tcp +nocookie -f "$BATS_TEST_DIRNAME/batch.query"
+	assert_equal "$NANODNSD_A" 8
+	assert_equal "$NANODNSD_AAAA" 8
 }

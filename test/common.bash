@@ -88,6 +88,30 @@ do_query()
 	done < <(dig @127.0.0.1 -p $port "$@" $opt)
 }
 
+do_batch_query()
+{
+	NANODNSD_A=0
+	NANODNSD_AAAA=0
+
+	while read -r line ; do
+		case "$line" in
+			\;*) ;;
+			"") ;;
+			*)
+				read -r domain ttl cls typ rr <<<"$line"
+				case "$typ" in
+					A)
+						: $((NANODNSD_A++))
+						;;
+					AAAA)
+						: $((NANODNSD_AAAA++))
+						;;
+				esac
+				;;
+		esac
+	done < <(dig @127.0.0.1 "$@")
+}
+
 do_update()
 {
 	T="$(mktemp -d)"
