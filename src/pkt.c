@@ -173,15 +173,15 @@ int pkt_put_uint32(struct pkt *pkt, uint32_t val)
 	return sizeof(uint32_t);
 }
 
-int pkt_put_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1])
+int pkt_put_name(struct pkt *pkt, const char *name)
 {
-	char *s = name;
+	const char *s = name;
 
 	while (*s) {
 		if (*s++ != '.')
 			return -EINVAL;
 
-		char *n = strchr(s, '.');
+		const char *n = strchr(s, '.');
 		if (n) {
 			size_t len = (size_t)(n - s);
 			assert(len <= MAX_LABEL_SIZE);

@@ -53,7 +53,7 @@ int pkt_get_blob(struct pkt *pkt, void *buf, size_t len);
 
 int pkt_put_uint16(struct pkt *pkt, uint16_t val);
 int pkt_put_uint32(struct pkt *pkt, uint32_t val);
-int pkt_put_name(struct pkt *pkt, char name[MAX_NAME_SIZE+1]);
+int pkt_put_name(struct pkt *pkt, const char *name);
 int pkt_put_blob(struct pkt *pkt, void *buf, size_t len);
 
 int pkt_or_uint16(struct pkt *pkt, size_t off, uint16_t val);

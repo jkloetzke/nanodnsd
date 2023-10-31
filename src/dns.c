@@ -194,7 +194,7 @@ static bool is_ipv4(struct sockaddr_storage *addr)
 }
 
 
-struct dns_rr *dns_rr_new(char name[MAX_NAME_SIZE+1], enum type type, uint32_t ttl)
+struct dns_rr *dns_rr_new(const char *name, enum type type, uint32_t ttl)
 {
 	struct dns_rr *ret = calloc(1, sizeof(struct dns_rr));
 	if (ret) {

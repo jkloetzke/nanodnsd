@@ -148,7 +148,7 @@ struct dns_reply
 	struct dns_cookie server_cookie; // RFC7873 4., valid if cookie set
 };
 
-struct dns_rr *dns_rr_new(char name[MAX_NAME_SIZE+1], enum type type, uint32_t ttl);
+struct dns_rr *dns_rr_new(const char *name, enum type type, uint32_t ttl);
 void dns_rr_delete(struct dns_rr **r);
 void dns_rr_add(struct dns_rr **anchor, struct dns_rr *n);
 
