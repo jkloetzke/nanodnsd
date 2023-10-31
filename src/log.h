@@ -29,7 +29,7 @@
 #define LOG_LEVEL_INFO  3
 #define LOG_LEVEL_DBG   4
 
-int log_level;
+extern int log_level;
 
 #define log_fatal(fmt, ...) do { \
 		if (log_level >= LOG_LEVEL_FATAL) \
